@@ -31,6 +31,30 @@ const META_MES = 600;
 
 export type OpenCompany = (empresa: string, cnpj?: string | null) => void;
 
+// Conta reuniões usando a data real da reunião (Lead.data_reuniao), não uma
+// adivinhação por palavra-chave no texto do histórico. Mesma lógica usada
+// no dashboard de Volume — mantém os dois consistentes entre si.
+function contarReunioesReaisDesde(from: Date): number {
+  const a = from.getTime();
+  return listLeads().filter((l) => {
+    const t = new Date(l.data_reuniao).getTime();
+    return Number.isFinite(t) && t >= a;
+  }).length;
+}
+
+function inicioDoDia(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function inicioDaSemana(d: Date) {
+  const x = inicioDoDia(d);
+  const diff = (x.getDay() + 6) % 7; // segunda-feira como início
+  x.setDate(x.getDate() - diff);
+  return x;
+}
+function inicioDoMes(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
 export function PainelExecutivo({ onOpenCompany }: { onOpenCompany?: OpenCompany }) {
   const [hydrated, setHydrated] = useState(false);
   const [tick, setTick] = useState(0);
@@ -52,12 +76,18 @@ export function PainelExecutivo({ onOpenCompany }: { onOpenCompany?: OpenCompany
 
   const dados = useMemo(() => {
     if (!hydrated) return null;
+    void tick;
     const rel = calcularRelatorioDiario();
+    const now = new Date();
     return {
       rel,
       ranking: rankingProspeccao(8),
       pausadosVencidos: listLeads().filter(isPauseDue),
-      
+      reunioesReais: {
+        hoje: contarReunioesReaisDesde(inicioDoDia(now)),
+        semana: contarReunioesReaisDesde(inicioDaSemana(now)),
+        mes: contarReunioesReaisDesde(inicioDoMes(now)),
+      },
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, tick]);
@@ -67,9 +97,9 @@ export function PainelExecutivo({ onOpenCompany }: { onOpenCompany?: OpenCompany
   return (
     <div className="space-y-5">
       <section className="grid gap-3 sm:grid-cols-3">
-        <MetaCard titulo="Hoje" metricas={dados.rel.hoje} meta={META_DIA} />
-        <MetaCard titulo="Semana" metricas={dados.rel.semana} meta={META_SEMANA} />
-        <MetaCard titulo="Mês" metricas={dados.rel.mes} meta={META_MES} />
+        <MetaCard titulo="Hoje" metricas={dados.rel.hoje} meta={META_DIA} reunioesReais={dados.reunioesReais.hoje} />
+        <MetaCard titulo="Semana" metricas={dados.rel.semana} meta={META_SEMANA} reunioesReais={dados.reunioesReais.semana} />
+        <MetaCard titulo="Mês" metricas={dados.rel.mes} meta={META_MES} reunioesReais={dados.reunioesReais.mes} />
       </section>
 
       {dados.pausadosVencidos.length > 0 && (
@@ -115,7 +145,17 @@ export function PainelExecutivo({ onOpenCompany }: { onOpenCompany?: OpenCompany
   );
 }
 
-function MetaCard({ titulo, metricas, meta }: { titulo: string; metricas: PeriodoMetricas; meta: number }) {
+function MetaCard({
+  titulo,
+  metricas,
+  meta,
+  reunioesReais,
+}: {
+  titulo: string;
+  metricas: PeriodoMetricas;
+  meta: number;
+  reunioesReais: number;
+}) {
   const pct = Math.min(100, Math.round((metricas.ligacoes / meta) * 100));
   const [aberto, setAberto] = useState(false);
   return (
@@ -142,7 +182,7 @@ function MetaCard({ titulo, metricas, meta }: { titulo: string; metricas: Period
       {aberto && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           <Badge variant="outline">Decisor {metricas.decisor}</Badge>
-          <Badge variant="outline">Reuniões {metricas.reunioes}</Badge>
+          <Badge variant="outline">Reuniões {reunioesReais}</Badge>
           <Badge variant="outline">Docs {metricas.documentos}</Badge>
         </div>
       )}
