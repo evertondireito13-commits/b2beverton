@@ -284,20 +284,38 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    // A resposta só é confiável se for realmente um array. Um erro do servidor
-    // pode atravessar a fronteira RPC como string/objeto — nesse caso NÃO
-    // sobrescrevemos o cache local (senão apagaríamos os dados do usuário).
-    if (!Array.isArray(hist) || !Array.isArray(leads)) {
-      console.warn("[cloud-store] resposta da nuvem em formato inesperado, mantendo cache local", {
-        hist: typeof hist,
-        leads: typeof leads,
-      });
+    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
+
+    // Trava de segurança: se a nuvem voltou vazia mas já existem dados salvos
+    // neste navegador, isso é sinal de problema (nome do consultor não bateu,
+    // permissão da nuvem, etc.) — NUNCA apagar o que já está salvo localmente
+    // nesse caso. Só continuamos se a nuvem realmente trouxe dados, ou se o
+    // cache local também já estava vazio (nada a perder).
+    const localHistRaw = window.localStorage.getItem(localKey("historico", consultor));
+    const localLeadsRaw = window.localStorage.getItem(localKey("leads", consultor));
+    let localHistCount = 0;
+    let localLeadsCount = 0;
+    try {
+      localHistCount = localHistRaw ? (JSON.parse(localHistRaw)?.length ?? 0) : 0;
+    } catch {
+      /* ignore */
+    }
+    try {
+      localLeadsCount = localLeadsRaw ? (JSON.parse(localLeadsRaw)?.length ?? 0) : 0;
+    } catch {
+      /* ignore */
+    }
+    const historicoSuspeito = historicos.length === 0 && localHistCount > 0;
+    const leadsSuspeito = leadList.length === 0 && localLeadsCount > 0;
+    if (historicoSuspeito || leadsSuspeito) {
+      console.warn(
+        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local por segurança, nada foi apagado.",
+        { historicoSuspeito, leadsSuspeito },
+      );
       setCloudStale(true);
       return;
     }
-
-    const historicos = hist.map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = leads.map((r) => rowToLead(r as unknown as LeadRow));
 
     window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
     window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
@@ -318,17 +336,6 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
   }
 }
 
-/** Lê um JSON do cache local garantindo que o resultado seja sempre um array. */
-function parseArray<T>(raw: string | null): T[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
 /** Envia uma única vez tudo que já existe no localStorage para a nuvem. */
 export async function runOneShotMigration(consultor: string): Promise<void> {
   if (!isBrowser()) return;
@@ -337,8 +344,8 @@ export async function runOneShotMigration(consultor: string): Promise<void> {
   try {
     const rawHist = window.localStorage.getItem(localKey("historico", consultor));
     const rawLeads = window.localStorage.getItem(localKey("leads", consultor));
-    const historicos = parseArray<HistoricoEmpresa>(rawHist);
-    const leads = parseArray<Lead>(rawLeads);
+    const historicos: HistoricoEmpresa[] = rawHist ? JSON.parse(rawHist) : [];
+    const leads: Lead[] = rawLeads ? JSON.parse(rawLeads) : [];
 
     if (Array.isArray(historicos) && historicos.length) {
       const rows = historicos.map((r) => historicoToRow(r, consultor)) as unknown as Array<
