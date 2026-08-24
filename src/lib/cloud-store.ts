@@ -284,8 +284,20 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
+    // A resposta só é confiável se for realmente um array. Um erro do servidor
+    // pode atravessar a fronteira RPC como string/objeto — nesse caso NÃO
+    // sobrescrevemos o cache local (senão apagaríamos os dados do usuário).
+    if (!Array.isArray(hist) || !Array.isArray(leads)) {
+      console.warn("[cloud-store] resposta da nuvem em formato inesperado, mantendo cache local", {
+        hist: typeof hist,
+        leads: typeof leads,
+      });
+      setCloudStale(true);
+      return;
+    }
+
+    const historicos = hist.map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadList = leads.map((r) => rowToLead(r as unknown as LeadRow));
 
     window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
     window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
