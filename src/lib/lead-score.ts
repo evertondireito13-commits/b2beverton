@@ -180,7 +180,12 @@ export function scoreEmpresas(): EmpresaScore[] {
     // Score de temperatura = qualidade do lead, sem urgência de calendário.
     let temperatura = score;
 
-    const proximaAcaoData = ultimo?.proximaAcaoData ?? followUp?.scheduled_at ?? null;
+    // Fonte única de verdade para "tem follow-up pendente": a mesma fila real
+    // (tabela follow_ups) que a tela de Follow-up usa. O campo proximaAcaoData
+    // do histórico (extraído por regex do texto gerado) pode divergir dessa
+    // fila e criar alertas "fantasma" no Ranking que nunca aparecem na tela
+    // de Follow-up de verdade — por isso não é mais usado para esta contagem.
+    const proximaAcaoData = followUp?.scheduled_at ?? null;
     if (proximaAcaoData) {
       const d = dias(proximaAcaoData);
       if (d !== null && d > 0) {
