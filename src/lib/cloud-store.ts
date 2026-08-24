@@ -284,8 +284,20 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
+    // A resposta só é confiável se for realmente um array. Um erro do servidor
+    // pode atravessar a fronteira RPC como string/objeto — nesse caso NÃO
+    // sobrescrevemos o cache local (senão apagaríamos os dados do usuário).
+    if (!Array.isArray(hist) || !Array.isArray(leads)) {
+      console.warn("[cloud-store] resposta da nuvem em formato inesperado, mantendo cache local", {
+        hist: typeof hist,
+        leads: typeof leads,
+      });
+      setCloudStale(true);
+      return;
+    }
+
+    const historicos = hist.map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadList = leads.map((r) => rowToLead(r as unknown as LeadRow));
 
     window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
     window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
@@ -306,6 +318,17 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
   }
 }
 
+/** Lê um JSON do cache local garantindo que o resultado seja sempre um array. */
+function parseArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Envia uma única vez tudo que já existe no localStorage para a nuvem. */
 export async function runOneShotMigration(consultor: string): Promise<void> {
   if (!isBrowser()) return;
@@ -314,8 +337,8 @@ export async function runOneShotMigration(consultor: string): Promise<void> {
   try {
     const rawHist = window.localStorage.getItem(localKey("historico", consultor));
     const rawLeads = window.localStorage.getItem(localKey("leads", consultor));
-    const historicos: HistoricoEmpresa[] = rawHist ? JSON.parse(rawHist) : [];
-    const leads: Lead[] = rawLeads ? JSON.parse(rawLeads) : [];
+    const historicos = parseArray<HistoricoEmpresa>(rawHist);
+    const leads = parseArray<Lead>(rawLeads);
 
     if (Array.isArray(historicos) && historicos.length) {
       const rows = historicos.map((r) => historicoToRow(r, consultor)) as unknown as Array<
