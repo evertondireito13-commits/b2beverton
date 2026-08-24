@@ -76,6 +76,28 @@ export const getLatestAppDataBackup = createServerFn({ method: "POST" })
     return (row ?? null) as AppDataBackup | null;
   });
 
+export const getBestAppDataBackup = createServerFn({ method: "POST" })
+  .middleware([requireBhmGate])
+  .validator((input: unknown) =>
+    z.object({ consultor: z.string().trim().min(1).max(120) }).parse(input),
+  )
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Ao contrário do "mais recente", este pega o backup com MAIS itens salvos.
+    // Isso evita restaurar um backup vazio que tenha sido salvo por engano
+    // depois de uma perda de dados no navegador.
+    const { data: row, error } = await supabaseAdmin
+      .from("app_data_backups")
+      .select("id, consultor, reason, schema_version, payload, item_count, content_hash, created_at")
+      .eq("consultor", data.consultor)
+      .order("item_count", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (row ?? null) as AppDataBackup | null;
+  });
+
 export const listAppDataBackups = createServerFn({ method: "POST" })
   .middleware([requireBhmGate])
   .validator((input: unknown) =>
