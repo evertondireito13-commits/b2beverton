@@ -318,6 +318,17 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
   }
 }
 
+/** Lê um JSON do cache local garantindo que o resultado seja sempre um array. */
+function parseArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Envia uma única vez tudo que já existe no localStorage para a nuvem. */
 export async function runOneShotMigration(consultor: string): Promise<void> {
   if (!isBrowser()) return;
