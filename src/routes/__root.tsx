@@ -11,6 +11,8 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+import { AutomaticBackup } from "@/components/automatic-backup";
+import { CloudHydrator } from "@/components/cloud-hydrator";
 
 function NotFoundComponent() {
   return (
@@ -24,6 +26,7 @@ function NotFoundComponent() {
         <div className="mt-6">
           <Link
             to="/"
+            search={{ tab: "pre" }}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Go home
@@ -77,19 +80,29 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Central de Prospecção B2B" },
+      { name: "description", content: "Gere script de abordagem e histórico pós-ligação para prospecção B2B em advocacia tributária." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Central de Prospecção B2B" },
+      { property: "og:description", content: "Gere script de abordagem e histórico pós-ligação para prospecção B2B em advocacia tributária." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Central de Prospecção B2B" },
+      { name: "twitter:description", content: "Gere script de abordagem e histórico pós-ligação para prospecção B2B em advocacia tributária." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/V8WtIEGzd5NeH5vmd5Zghzo87ou1/social-images/social-1783218869366-photo_2026-06-03_17-22-41.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/V8WtIEGzd5NeH5vmd5Zghzo87ou1/social-images/social-1783218869366-photo_2026-06-03_17-22-41.webp" },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap",
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
@@ -102,9 +115,16 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="pt-BR">
       <head>
         <HeadContent />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('bhm:theme')||'noir';if(t==='dark'||t==='noir'){document.documentElement.classList.add(t);}}catch(e){document.documentElement.classList.add('noir');}",
+          }}
+        />
+
       </head>
       <body>
         {children}
@@ -121,6 +141,8 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
+      <AutomaticBackup />
+      <CloudHydrator />
     </QueryClientProvider>
   );
 }

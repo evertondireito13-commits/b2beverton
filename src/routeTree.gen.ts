@@ -9,8 +9,74 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ReunioesRouteImport } from './routes/reunioes'
+import { Route as RelatoriosRouteImport } from './routes/relatorios'
+import { Route as RelatorioDiarioRouteImport } from './routes/relatorio-diario'
+import { Route as RelatorioRouteImport } from './routes/relatorio'
+import { Route as PreparacaoRouteImport } from './routes/preparacao'
+import { Route as PainelRouteImport } from './routes/painel'
+import { Route as FollowupRouteImport } from './routes/followup'
+import { Route as EstrategiaRouteImport } from './routes/estrategia'
+import { Route as EmpresasRouteImport } from './routes/empresas'
+import { Route as ComissaoRouteImport } from './routes/comissao'
+import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
 
+const ReunioesRoute = ReunioesRouteImport.update({
+  id: '/reunioes',
+  path: '/reunioes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RelatoriosRoute = RelatoriosRouteImport.update({
+  id: '/relatorios',
+  path: '/relatorios',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RelatorioDiarioRoute = RelatorioDiarioRouteImport.update({
+  id: '/relatorio-diario',
+  path: '/relatorio-diario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RelatorioRoute = RelatorioRouteImport.update({
+  id: '/relatorio',
+  path: '/relatorio',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreparacaoRoute = PreparacaoRouteImport.update({
+  id: '/preparacao',
+  path: '/preparacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PainelRoute = PainelRouteImport.update({
+  id: '/painel',
+  path: '/painel',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FollowupRoute = FollowupRouteImport.update({
+  id: '/followup',
+  path: '/followup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstrategiaRoute = EstrategiaRouteImport.update({
+  id: '/estrategia',
+  path: '/estrategia',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmpresasRoute = EmpresasRouteImport.update({
+  id: '/empresas',
+  path: '/empresas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ComissaoRoute = ComissaoRouteImport.update({
+  id: '/comissao',
+  path: '/comissao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgendaRoute = AgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -19,28 +85,186 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
+  '/comissao': typeof ComissaoRoute
+  '/empresas': typeof EmpresasRoute
+  '/estrategia': typeof EstrategiaRoute
+  '/followup': typeof FollowupRoute
+  '/painel': typeof PainelRoute
+  '/preparacao': typeof PreparacaoRoute
+  '/relatorio': typeof RelatorioRoute
+  '/relatorio-diario': typeof RelatorioDiarioRoute
+  '/relatorios': typeof RelatoriosRoute
+  '/reunioes': typeof ReunioesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
+  '/comissao': typeof ComissaoRoute
+  '/empresas': typeof EmpresasRoute
+  '/estrategia': typeof EstrategiaRoute
+  '/followup': typeof FollowupRoute
+  '/painel': typeof PainelRoute
+  '/preparacao': typeof PreparacaoRoute
+  '/relatorio': typeof RelatorioRoute
+  '/relatorio-diario': typeof RelatorioDiarioRoute
+  '/relatorios': typeof RelatoriosRoute
+  '/reunioes': typeof ReunioesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
+  '/comissao': typeof ComissaoRoute
+  '/empresas': typeof EmpresasRoute
+  '/estrategia': typeof EstrategiaRoute
+  '/followup': typeof FollowupRoute
+  '/painel': typeof PainelRoute
+  '/preparacao': typeof PreparacaoRoute
+  '/relatorio': typeof RelatorioRoute
+  '/relatorio-diario': typeof RelatorioDiarioRoute
+  '/relatorios': typeof RelatoriosRoute
+  '/reunioes': typeof ReunioesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/agenda'
+    | '/comissao'
+    | '/empresas'
+    | '/estrategia'
+    | '/followup'
+    | '/painel'
+    | '/preparacao'
+    | '/relatorio'
+    | '/relatorio-diario'
+    | '/relatorios'
+    | '/reunioes'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/agenda'
+    | '/comissao'
+    | '/empresas'
+    | '/estrategia'
+    | '/followup'
+    | '/painel'
+    | '/preparacao'
+    | '/relatorio'
+    | '/relatorio-diario'
+    | '/relatorios'
+    | '/reunioes'
+  id:
+    | '__root__'
+    | '/'
+    | '/agenda'
+    | '/comissao'
+    | '/empresas'
+    | '/estrategia'
+    | '/followup'
+    | '/painel'
+    | '/preparacao'
+    | '/relatorio'
+    | '/relatorio-diario'
+    | '/relatorios'
+    | '/reunioes'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgendaRoute: typeof AgendaRoute
+  ComissaoRoute: typeof ComissaoRoute
+  EmpresasRoute: typeof EmpresasRoute
+  EstrategiaRoute: typeof EstrategiaRoute
+  FollowupRoute: typeof FollowupRoute
+  PainelRoute: typeof PainelRoute
+  PreparacaoRoute: typeof PreparacaoRoute
+  RelatorioRoute: typeof RelatorioRoute
+  RelatorioDiarioRoute: typeof RelatorioDiarioRoute
+  RelatoriosRoute: typeof RelatoriosRoute
+  ReunioesRoute: typeof ReunioesRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/reunioes': {
+      id: '/reunioes'
+      path: '/reunioes'
+      fullPath: '/reunioes'
+      preLoaderRoute: typeof ReunioesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/relatorios': {
+      id: '/relatorios'
+      path: '/relatorios'
+      fullPath: '/relatorios'
+      preLoaderRoute: typeof RelatoriosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/relatorio-diario': {
+      id: '/relatorio-diario'
+      path: '/relatorio-diario'
+      fullPath: '/relatorio-diario'
+      preLoaderRoute: typeof RelatorioDiarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/relatorio': {
+      id: '/relatorio'
+      path: '/relatorio'
+      fullPath: '/relatorio'
+      preLoaderRoute: typeof RelatorioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preparacao': {
+      id: '/preparacao'
+      path: '/preparacao'
+      fullPath: '/preparacao'
+      preLoaderRoute: typeof PreparacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/painel': {
+      id: '/painel'
+      path: '/painel'
+      fullPath: '/painel'
+      preLoaderRoute: typeof PainelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/followup': {
+      id: '/followup'
+      path: '/followup'
+      fullPath: '/followup'
+      preLoaderRoute: typeof FollowupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estrategia': {
+      id: '/estrategia'
+      path: '/estrategia'
+      fullPath: '/estrategia'
+      preLoaderRoute: typeof EstrategiaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/empresas': {
+      id: '/empresas'
+      path: '/empresas'
+      fullPath: '/empresas'
+      preLoaderRoute: typeof EmpresasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/comissao': {
+      id: '/comissao'
+      path: '/comissao'
+      fullPath: '/comissao'
+      preLoaderRoute: typeof ComissaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agenda': {
+      id: '/agenda'
+      path: '/agenda'
+      fullPath: '/agenda'
+      preLoaderRoute: typeof AgendaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -53,6 +277,17 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgendaRoute: AgendaRoute,
+  ComissaoRoute: ComissaoRoute,
+  EmpresasRoute: EmpresasRoute,
+  EstrategiaRoute: EstrategiaRoute,
+  FollowupRoute: FollowupRoute,
+  PainelRoute: PainelRoute,
+  PreparacaoRoute: PreparacaoRoute,
+  RelatorioRoute: RelatorioRoute,
+  RelatorioDiarioRoute: RelatorioDiarioRoute,
+  RelatoriosRoute: RelatoriosRoute,
+  ReunioesRoute: ReunioesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,0 +1,2 @@
+ALTER TABLE public.follow_ups DROP CONSTRAINT IF EXISTS follow_ups_action_type_chk;
+ALTER TABLE public.follow_ups ADD CONSTRAINT follow_ups_action_type_chk CHECK (action_type = ANY (ARRAY['call','email','meeting','whatsapp','other','negociacao','apresentacao_calculos','follow_up_reuniao','fechamento','reuniao_realizada']));

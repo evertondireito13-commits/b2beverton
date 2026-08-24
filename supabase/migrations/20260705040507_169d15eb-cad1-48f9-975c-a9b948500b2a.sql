@@ -1,0 +1,1 @@
+ALTER TABLE public.call_logs ADD COLUMN IF NOT EXISTS meeting_email TEXT;

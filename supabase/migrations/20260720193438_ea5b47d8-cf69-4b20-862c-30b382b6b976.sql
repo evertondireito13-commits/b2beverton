@@ -1,0 +1,1 @@
+ALTER TABLE public.follow_ups ADD COLUMN IF NOT EXISTS email_sent boolean NOT NULL DEFAULT false; ALTER TABLE public.follow_ups ADD COLUMN IF NOT EXISTS email_sent_at timestamptz;
