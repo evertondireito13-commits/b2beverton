@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { CheckCircle2, Cloud, Loader2 } from "lucide-react";
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
-import { getLatestAppDataBackup, saveAppDataBackup } from "@/lib/data-backup.functions";
+import { getBestAppDataBackup, saveAppDataBackup } from "@/lib/data-backup.functions";
 import {
   BACKUP_RESTORED_EVENT,
   collectDurableAppData,
@@ -23,7 +23,7 @@ const DATA_EVENTS = [
 
 export function AutomaticBackup() {
   const saveBackup = useServerFn(saveAppDataBackup);
-  const getLatest = useServerFn(getLatestAppDataBackup);
+  const getBest = useServerFn(getBestAppDataBackup);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -62,10 +62,10 @@ export function AutomaticBackup() {
     async function recoverThenProtect() {
       const consultor = getSessionConsultor() ?? getConsultor();
       try {
-        const latest = await getLatest({ data: { consultor } });
-        if (!cancelled && latest?.payload && typeof latest.payload === "object" && !Array.isArray(latest.payload)) {
-          restoreMissingAppData(latest.payload as Record<string, unknown>, consultor);
-          setLastSavedAt(latest.created_at);
+        const best = await getBest({ data: { consultor } });
+        if (!cancelled && best?.payload && typeof best.payload === "object" && !Array.isArray(best.payload)) {
+          restoreMissingAppData(best.payload as Record<string, unknown>, consultor);
+          setLastSavedAt(best.created_at);
         }
       } catch {
         // O cache local continua funcionando mesmo durante indisponibilidade de rede.
@@ -74,7 +74,7 @@ export function AutomaticBackup() {
     }
     void recoverThenProtect();
     return () => { cancelled = true; };
-  }, [getLatest, runBackup]);
+  }, [getBest, runBackup]);
 
   useEffect(() => {
     for (const eventName of DATA_EVENTS) window.addEventListener(eventName, scheduleBackup);
