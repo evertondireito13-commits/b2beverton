@@ -326,8 +326,8 @@ export async function runOneShotMigration(consultor: string): Promise<void> {
   try {
     const rawHist = window.localStorage.getItem(localKey("historico", consultor));
     const rawLeads = window.localStorage.getItem(localKey("leads", consultor));
-    const historicos: HistoricoEmpresa[] = rawHist ? JSON.parse(rawHist) : [];
-    const leads: Lead[] = rawLeads ? JSON.parse(rawLeads) : [];
+    const historicos = parseArray<HistoricoEmpresa>(rawHist);
+    const leads = parseArray<Lead>(rawLeads);
 
     if (Array.isArray(historicos) && historicos.length) {
       const rows = historicos.map((r) => historicoToRow(r, consultor)) as unknown as Array<
