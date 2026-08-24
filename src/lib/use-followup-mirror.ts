@@ -19,16 +19,22 @@ export function useFollowUpMirror(enabled = true): number {
         from.setDate(from.getDate() - 60);
         const to = new Date();
         to.setDate(to.getDate() + 365);
-        const rows = (await runList({
+        const rows = await runList({
           data: {
             from: from.toISOString(),
             to: to.toISOString(),
             limit: 500,
             consultor: activeConsultor(),
           },
-        })) as FollowUp[];
+        });
         if (cancelled) return;
-        cacheRemoteFollowUps(rows);
+        // Resposta só é aplicada ao espelho local se for realmente um array;
+        // um erro do servidor pode chegar como string/objeto pelo RPC.
+        if (!Array.isArray(rows)) {
+          console.warn("[follow-ups] resposta em formato inesperado, mantendo espelho local");
+          return;
+        }
+        cacheRemoteFollowUps(rows as FollowUp[]);
         setVersion((n) => n + 1);
       } catch {
         /* offline: usa o espelho existente */
