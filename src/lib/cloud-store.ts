@@ -318,10 +318,13 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
     const leadsSuspeito = leadList.length === 0 && localLeadsCount > 0;
     if (historicoSuspeito || leadsSuspeito) {
       console.warn(
-        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local por segurança, nada foi apagado.",
+        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local e reenviando para a nuvem.",
         { historicoSuspeito, leadsSuspeito },
       );
       setCloudStale(true);
+      // Auto-recuperação: o banco pode ter sido recriado/zerado. Reenvia o que
+      // existe neste navegador (uma vez por sessão) para repovoar a nuvem.
+      await repushLocal(consultor);
       return;
     }
 
@@ -341,6 +344,38 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
   } catch (err) {
     console.warn("[cloud-store] leitura da nuvem falhou, usando cache local:", err);
     setCloudStale(true);
+  }
+}
+
+const repushed = new Set<string>();
+
+/**
+ * Reenvia para a nuvem tudo que existe neste navegador. Usado quando a nuvem
+ * responde vazia mas há dados locais (banco recriado, sync perdido).
+ * Roda no máximo uma vez por sessão e por consultor.
+ */
+async function repushLocal(consultor: string): Promise<void> {
+  if (!isBrowser() || repushed.has(consultor)) return;
+  repushed.add(consultor);
+  try {
+    const rawHist = window.localStorage.getItem(localKey("historico", consultor));
+    const rawLeads = window.localStorage.getItem(localKey("leads", consultor));
+    const historicos: HistoricoEmpresa[] = rawHist ? JSON.parse(rawHist) : [];
+    const leads: Lead[] = rawLeads ? JSON.parse(rawLeads) : [];
+
+    if (Array.isArray(historicos) && historicos.length) {
+      const rows = historicos.map((r) => historicoToRow(r, consultor));
+      saveHashes(`historico::${consultor}`, {});
+      await pushRows("historico", rows, consultor);
+    }
+    if (Array.isArray(leads) && leads.length) {
+      const rows = leads.map((l) => leadToRow(l, consultor));
+      saveHashes(`leads::${consultor}`, {});
+      await pushRows("leads", rows, consultor);
+    }
+    console.info("[cloud-store] dados locais reenviados para a nuvem.");
+  } catch (err) {
+    console.warn("[cloud-store] falha ao reenviar dados locais:", err);
   }
 }
 
