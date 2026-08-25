@@ -101,6 +101,8 @@ export function historicoToRow(r: HistoricoEmpresa, consultor: string) {
     descricao_original: r.descricaoOriginal ?? null,
     status: r.status ?? "pendente",
     arquivado_manual: r.arquivadoManual ?? false,
+    excluido_em: iso(r.excluidoEm ?? undefined),
+    excluido_motivo: r.excluidoMotivo ?? null,
   };
 }
 
@@ -126,6 +128,8 @@ export function rowToHistorico(row: HistoricoRow, consultor: string): HistoricoE
     consultor: consultor as HistoricoEmpresa["consultor"],
     status: (row.status as HistoricoStatus) ?? "pendente",
     arquivadoManual: row.arquivado_manual,
+    excluidoEm: row.excluido_em ?? null,
+    excluidoMotivo: row.excluido_motivo ?? null,
   };
 }
 
@@ -167,6 +171,8 @@ export function leadToRow(l: Lead, consultor: string) {
     anexos: l.anexos ?? [],
     comissao_percentual: l.comissao_percentual ?? null,
     contrato_assinado_em: iso(l.contrato_assinado_em),
+    excluido_em: iso(l.excluido_em ?? undefined),
+    excluido_motivo: l.excluido_motivo ?? null,
     updated_at: iso(l.updated_at) ?? new Date().toISOString(),
   };
 }
@@ -210,6 +216,8 @@ export function rowToLead(row: LeadRow): Lead {
     anexos: (row.anexos as Lead["anexos"]) ?? [],
     comissao_percentual: row.comissao_percentual ?? undefined,
     contrato_assinado_em: row.contrato_assinado_em ?? undefined,
+    excluido_em: row.excluido_em ?? null,
+    excluido_motivo: row.excluido_motivo ?? null,
     updated_at: row.updated_at ?? new Date().toISOString(),
   };
 }
@@ -271,33 +279,9 @@ function localKey(kind: Kind, consultor: string) {
     : `${LEADS_KEY_BASE}::${consultor}`;
 }
 
-/** Junta o que veio da nuvem com o que já está no navegador, por id.
- *  Nunca "esquece" um item que só existe localmente — se a nuvem devolver
- *  uma lista vazia (ex.: banco recém-criado numa transferência de conta,
- *  ou o marcador de migração ficou preso de um backend antigo), o item
- *  local simplesmente é mantido, em vez de apagado. Quando o mesmo id
- *  existe nos dois lados, a versão da nuvem vence (é a mais "oficial"). */
-function mergeById<T extends { id: string }>(local: T[], remoto: T[]): T[] {
-  const porId = new Map<string, T>();
-  for (const item of local) porId.set(item.id, item);
-  for (const item of remoto) porId.set(item.id, item); // nuvem tem prioridade quando existe dos dois lados
-  return Array.from(porId.values());
-}
-
-function lerLocal<T>(kind: Kind, consultor: string): T[] {
-  try {
-    const raw = window.localStorage.getItem(localKey(kind, consultor));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
- * Baixa os dados da nuvem e MISTURA com o cache local (nunca substitui puro).
- * Se a nuvem falhar, mantém o cache atual e marca o estado como
- * "possivelmente desatualizado".
+ * Baixa os dados da nuvem para o cache local. Se falhar, mantém o cache atual
+ * e marca o estado como "possivelmente desatualizado".
  */
 export async function hydrateFromCloud(consultor: string): Promise<void> {
   if (!isBrowser()) return;
@@ -308,14 +292,8 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    const historicosRemoto = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadsRemoto = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
-
-    const historicoLocal = lerLocal<HistoricoEmpresa>("historico", consultor);
-    const leadsLocal = lerLocal<Lead>("leads", consultor);
-
-    const historicos = mergeById(historicoLocal, historicosRemoto);
-    const leadList = mergeById(leadsLocal, leadsRemoto);
+    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
 
     window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
     window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
@@ -330,20 +308,6 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
     setCloudStale(false);
     window.dispatchEvent(new Event("bhm:historico-updated"));
     window.dispatchEvent(new CustomEvent("bhm:leads-updated"));
-
-    // Auto-cura: qualquer item que só existia localmente (ainda não tinha
-    // chegado na nuvem) é reenviado agora — fecha o buraco de vez, mesmo
-    // que o marcador de "já migrei" estivesse preso de um backend antigo.
-    scheduleCloudSync(
-      "historico",
-      historicos.map((r) => historicoToRow(r, consultor)),
-      consultor,
-    );
-    scheduleCloudSync(
-      "leads",
-      leadList.map((l) => leadToRow(l, consultor)),
-      consultor,
-    );
   } catch (err) {
     console.warn("[cloud-store] leitura da nuvem falhou, usando cache local:", err);
     setCloudStale(true);
