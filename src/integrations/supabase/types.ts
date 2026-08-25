@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -246,6 +246,8 @@ export type Database = {
           data_iso: string
           descricao_original: string | null
           empresa_nome: string
+          excluido_em: string | null
+          excluido_motivo: string | null
           id: string
           interesse: string | null
           objecao: string | null
@@ -265,6 +267,8 @@ export type Database = {
           data_iso?: string
           descricao_original?: string | null
           empresa_nome: string
+          excluido_em?: string | null
+          excluido_motivo?: string | null
           id?: string
           interesse?: string | null
           objecao?: string | null
@@ -284,6 +288,8 @@ export type Database = {
           data_iso?: string
           descricao_original?: string | null
           empresa_nome?: string
+          excluido_em?: string | null
+          excluido_motivo?: string | null
           id?: string
           interesse?: string | null
           objecao?: string | null
@@ -313,6 +319,8 @@ export type Database = {
           em_followup_frio: boolean
           email: string | null
           empresa: string
+          excluido_em: string | null
+          excluido_motivo: string | null
           fase_antes_pausa: string | null
           fechamento_direto: boolean
           follow_ups: Json | null
@@ -353,6 +361,8 @@ export type Database = {
           em_followup_frio?: boolean
           email?: string | null
           empresa: string
+          excluido_em?: string | null
+          excluido_motivo?: string | null
           fase_antes_pausa?: string | null
           fechamento_direto?: boolean
           follow_ups?: Json | null
@@ -393,6 +403,8 @@ export type Database = {
           em_followup_frio?: boolean
           email?: string | null
           empresa?: string
+          excluido_em?: string | null
+          excluido_motivo?: string | null
           fase_antes_pausa?: string | null
           fechamento_direto?: boolean
           follow_ups?: Json | null
@@ -415,6 +427,54 @@ export type Database = {
           ultima_observacao?: string | null
           updated_at?: string
           valor_credito?: number | null
+        }
+        Relationships: []
+      }
+      leads_central: {
+        Row: {
+          cnpj: string
+          consultor: string
+          contato_cargo: string | null
+          contato_nome: string | null
+          created_at: string
+          data_agendamento: string | null
+          em_followup_frio: boolean
+          id: string
+          razao_social: string
+          rd_deal_id: string | null
+          status: Database["public"]["Enums"]["lead_central_status"]
+          ultima_observacao: string | null
+          updated_at: string
+        }
+        Insert: {
+          cnpj: string
+          consultor?: string
+          contato_cargo?: string | null
+          contato_nome?: string | null
+          created_at?: string
+          data_agendamento?: string | null
+          em_followup_frio?: boolean
+          id?: string
+          razao_social: string
+          rd_deal_id?: string | null
+          status?: Database["public"]["Enums"]["lead_central_status"]
+          ultima_observacao?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cnpj?: string
+          consultor?: string
+          contato_cargo?: string | null
+          contato_nome?: string | null
+          created_at?: string
+          data_agendamento?: string | null
+          em_followup_frio?: boolean
+          id?: string
+          razao_social?: string
+          rd_deal_id?: string | null
+          status?: Database["public"]["Enums"]["lead_central_status"]
+          ultima_observacao?: string | null
+          updated_at?: string
         }
         Relationships: []
       }
@@ -459,7 +519,13 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      lead_central_status:
+        | "reuniao_agendada"
+        | "pos_reuniao"
+        | "levantamento_docs"
+        | "apresentacao_calculos"
+        | "fechado"
+        | "perdido"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -586,6 +652,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      lead_central_status: [
+        "reuniao_agendada",
+        "pos_reuniao",
+        "levantamento_docs",
+        "apresentacao_calculos",
+        "fechado",
+        "perdido",
+      ],
+    },
   },
 } as const
