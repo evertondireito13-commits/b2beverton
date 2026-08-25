@@ -17,7 +17,7 @@ import {
   LeadStatus,
   addBusinessDays,
   archiveLead,
-  deleteLead,
+  hardDeleteLead,
   findLead,
   listLeads,
   updateLead,
@@ -264,7 +264,7 @@ export function E2ESimulator() {
 
     listLeads()
       .filter(isTestLead)
-      .forEach((l) => deleteLead(l.id));
+      .forEach((l) => hardDeleteLead(l.id));
 
     deleteHistoricosByEmpresa({ cnpj: LEAD_TESTE.cnpj, empresaNome: LEAD_TESTE.empresa });
     FOLLOWUPS_TESTE.forEach((f) =>
@@ -419,3 +419,4 @@ export function E2ESimulator() {
     </Dialog>
   );
 }
+
