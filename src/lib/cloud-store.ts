@@ -318,10 +318,13 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
     const leadsSuspeito = leadList.length === 0 && localLeadsCount > 0;
     if (historicoSuspeito || leadsSuspeito) {
       console.warn(
-        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local por segurança, nada foi apagado.",
+        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local e reenviando para a nuvem.",
         { historicoSuspeito, leadsSuspeito },
       );
       setCloudStale(true);
+      // Auto-recuperação: o banco pode ter sido recriado/zerado. Reenvia o que
+      // existe neste navegador (uma vez por sessão) para repovoar a nuvem.
+      await repushLocal(consultor);
       return;
     }
 
