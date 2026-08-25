@@ -39,6 +39,10 @@ export type HistoricoEmpresa = {
   consultor?: Consultor | null;
   status?: HistoricoStatus; // 'pendente' padrão; 'arquivado' após negativa; 'concluido' quando reunião marcada
   arquivadoManual?: boolean; // marcação explícita "dar baixa" no formulário
+  /** ISO — quando este registro foi excluído junto com a empresa (soft-delete). */
+  excluidoEm?: string | null;
+  /** Motivo informado ao excluir a empresa (mesmo motivo do lead). */
+  excluidoMotivo?: string | null;
 };
 
 
@@ -63,7 +67,8 @@ function writeHistoricos(list: HistoricoEmpresa[]) {
   );
 }
 
-export function listHistoricos(): HistoricoEmpresa[] {
+/** Leitura crua do storage — inclui registros excluídos. Uso interno. */
+function readAllHistoricos(): HistoricoEmpresa[] {
   if (!isBrowser()) return [];
   try {
     const raw = window.localStorage.getItem(historicosKey());
@@ -75,9 +80,19 @@ export function listHistoricos(): HistoricoEmpresa[] {
   }
 }
 
+/** Histórico ativo (não excluído). É o que o resto do app deve usar. */
+export function listHistoricos(): HistoricoEmpresa[] {
+  return readAllHistoricos().filter((r) => !r.excluidoEm);
+}
+
+/** Registros de histórico excluídos junto com uma empresa (soft-delete). */
+export function listHistoricosExcluidos(): HistoricoEmpresa[] {
+  return readAllHistoricos().filter((r) => !!r.excluidoEm);
+}
+
 export function saveHistorico(reg: HistoricoEmpresa): HistoricoEmpresa[] {
   if (!isBrowser()) return [];
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   list.unshift(reg);
   const trimmed = list.slice(0, 2000);
   try {
@@ -118,7 +133,7 @@ export function deleteHistoricosByEmpresa(
     ? normalizarTexto(target.empresaNome).replace(/[^a-z0-9]/g, "")
     : "";
   if (!cnpjDigits && !nomeKey) return 0;
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   const filtered = list.filter((r) => {
     const rc = (r.cnpj ?? "").replace(/\D/g, "");
     if (cnpjDigits && rc && rc === cnpjDigits) return false;
@@ -139,12 +154,67 @@ export function deleteHistoricosByEmpresa(
 }
 
 /**
+ * Soft-delete: marca os registros de histórico que casam com a empresa
+ * (mesmo critério de `historicoMatchesEmpresa`) como excluídos, sem apagar
+ * nada — usado junto com `deleteLead` no fluxo de "Excluir empresa" da
+ * Central, para que a restauração traga o histórico completo de volta.
+ */
+export function softDeleteHistoricosByEmpresa(
+  target: { cnpj?: string | null; empresaNome?: string | null },
+  motivo?: string,
+): number {
+  if (!isBrowser()) return 0;
+  const list = readAllHistoricos();
+  const now = new Date().toISOString();
+  const motivoLimpo = motivo?.trim() || null;
+  let count = 0;
+  const next = list.map((r) => {
+    if (r.excluidoEm) return r; // já excluído, não mexe
+    if (!historicoMatchesEmpresa(r, target)) return r;
+    count++;
+    return { ...r, excluidoEm: now, excluidoMotivo: motivoLimpo };
+  });
+  if (count > 0) {
+    try {
+      writeHistoricos(next);
+      window.dispatchEvent(new Event("bhm:historico-updated"));
+    } catch { /* quota */ }
+  }
+  return count;
+}
+
+/**
+ * Reverte o soft-delete dos registros de histórico de uma empresa —
+ * usado junto com `restoreLead` para trazer o histórico completo de volta.
+ */
+export function restoreHistoricosByEmpresa(
+  target: { cnpj?: string | null; empresaNome?: string | null },
+): number {
+  if (!isBrowser()) return 0;
+  const list = readAllHistoricos();
+  let count = 0;
+  const next = list.map((r) => {
+    if (!r.excluidoEm) return r;
+    if (!historicoMatchesEmpresa(r, target)) return r;
+    count++;
+    return { ...r, excluidoEm: null, excluidoMotivo: null };
+  });
+  if (count > 0) {
+    try {
+      writeHistoricos(next);
+      window.dispatchEvent(new Event("bhm:historico-updated"));
+    } catch { /* quota */ }
+  }
+  return count;
+}
+
+/**
  * Atualiza o status do histórico (ex.: após classificação assíncrona do
  * desfecho da conversa). Sem id, aplica no registro mais recente.
  */
 export function updateHistoricoStatus(status: HistoricoStatus, id?: string): HistoricoEmpresa | null {
   if (!isBrowser()) return null;
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   if (list.length === 0) return null;
   const idx = id ? list.findIndex((r) => r.id === id) : 0;
   if (idx < 0) return null;
@@ -168,12 +238,13 @@ export function arquivarEmpresaHistorico(
   cnpj?: string | null,
 ): boolean {
   if (!isBrowser()) return false;
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   const key = empresaKey(empresa);
   const digitos = (cnpj ?? "").replace(/\D/g, "");
   const candidatos = list
     .map((r, idx) => ({ r, idx }))
     .filter(({ r }) => {
+      if (r.excluidoEm) return false;
       const rk = empresaKey(r.empresaNome);
       const rc = (r.cnpj ?? "").replace(/\D/g, "");
       return (!!digitos && !!rc && rc === digitos) || (!!key && rk === key);
@@ -204,7 +275,7 @@ export function updateHistoricoEmpresa(id: string, novoNome: string): HistoricoE
   if (!isBrowser()) return null;
   const nome = novoNome.trim();
   if (!nome) return null;
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   const idx = list.findIndex((r) => r.id === id);
   if (idx < 0) return null;
   const alvo = list[idx];
@@ -237,7 +308,7 @@ export function updateHistoricoContatoCargo(
   patch: { contato?: string | null; cargo?: string | null },
 ): HistoricoEmpresa | null {
   if (!isBrowser()) return null;
-  const list = listHistoricos();
+  const list = readAllHistoricos();
   const idx = list.findIndex((r) => r.id === id);
   if (idx < 0) return null;
   const updated: HistoricoEmpresa = {
@@ -856,8 +927,8 @@ export function setProximaAcaoDataEmpresa(
   proximaAcao?: string | null,
 ): HistoricoEmpresa | null {
   if (!isBrowser()) return null;
-  const list = listHistoricos();
-  const idx = list.findIndex((r) => historicoMatchesEmpresa(r, target));
+  const list = readAllHistoricos();
+  const idx = list.findIndex((r) => !r.excluidoEm && historicoMatchesEmpresa(r, target));
   if (idx < 0) return null;
   const atual = list[idx];
   const atualizado: HistoricoEmpresa = {
@@ -1070,5 +1141,3 @@ export function extractEmailsPessoas(historico: string): string {
     .filter(Boolean)
     .join("\n\n");
 }
-
-
