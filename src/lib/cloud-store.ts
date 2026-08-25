@@ -271,9 +271,33 @@ function localKey(kind: Kind, consultor: string) {
     : `${LEADS_KEY_BASE}::${consultor}`;
 }
 
+/** Junta o que veio da nuvem com o que já está no navegador, por id.
+ *  Nunca "esquece" um item que só existe localmente — se a nuvem devolver
+ *  uma lista vazia (ex.: banco recém-criado numa transferência de conta,
+ *  ou o marcador de migração ficou preso de um backend antigo), o item
+ *  local simplesmente é mantido, em vez de apagado. Quando o mesmo id
+ *  existe nos dois lados, a versão da nuvem vence (é a mais "oficial"). */
+function mergeById<T extends { id: string }>(local: T[], remoto: T[]): T[] {
+  const porId = new Map<string, T>();
+  for (const item of local) porId.set(item.id, item);
+  for (const item of remoto) porId.set(item.id, item); // nuvem tem prioridade quando existe dos dois lados
+  return Array.from(porId.values());
+}
+
+function lerLocal<T>(kind: Kind, consultor: string): T[] {
+  try {
+    const raw = window.localStorage.getItem(localKey(kind, consultor));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Baixa os dados da nuvem para o cache local. Se falhar, mantém o cache atual
- * e marca o estado como "possivelmente desatualizado".
+ * Baixa os dados da nuvem e MISTURA com o cache local (nunca substitui puro).
+ * Se a nuvem falhar, mantém o cache atual e marca o estado como
+ * "possivelmente desatualizado".
  */
 export async function hydrateFromCloud(consultor: string): Promise<void> {
   if (!isBrowser()) return;
@@ -284,49 +308,14 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    // A nuvem pode responder com erro (string/objeto) em vez de lista. Nesse
-    // caso tratamos como falha de leitura e preservamos o cache local.
-    if (!Array.isArray(hist) || !Array.isArray(leads)) {
-      console.warn("[cloud-store] resposta da nuvem em formato inesperado — mantendo cache local.");
-      setCloudStale(true);
-      return;
-    }
+    const historicosRemoto = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadsRemoto = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
 
-    const historicos = hist.map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = leads.map((r) => rowToLead(r as unknown as LeadRow));
+    const historicoLocal = lerLocal<HistoricoEmpresa>("historico", consultor);
+    const leadsLocal = lerLocal<Lead>("leads", consultor);
 
-    // Trava de segurança: se a nuvem voltou vazia mas já existem dados salvos
-    // neste navegador, isso é sinal de problema (nome do consultor não bateu,
-    // permissão da nuvem, etc.) — NUNCA apagar o que já está salvo localmente
-    // nesse caso. Só continuamos se a nuvem realmente trouxe dados, ou se o
-    // cache local também já estava vazio (nada a perder).
-    const localHistRaw = window.localStorage.getItem(localKey("historico", consultor));
-    const localLeadsRaw = window.localStorage.getItem(localKey("leads", consultor));
-    let localHistCount = 0;
-    let localLeadsCount = 0;
-    try {
-      localHistCount = localHistRaw ? (JSON.parse(localHistRaw)?.length ?? 0) : 0;
-    } catch {
-      /* ignore */
-    }
-    try {
-      localLeadsCount = localLeadsRaw ? (JSON.parse(localLeadsRaw)?.length ?? 0) : 0;
-    } catch {
-      /* ignore */
-    }
-    const historicoSuspeito = historicos.length === 0 && localHistCount > 0;
-    const leadsSuspeito = leadList.length === 0 && localLeadsCount > 0;
-    if (historicoSuspeito || leadsSuspeito) {
-      console.warn(
-        "[cloud-store] a nuvem voltou vazia mas há dados salvos neste navegador — mantendo o cache local e reenviando para a nuvem.",
-        { historicoSuspeito, leadsSuspeito },
-      );
-      setCloudStale(true);
-      // Auto-recuperação: o banco pode ter sido recriado/zerado. Reenvia o que
-      // existe neste navegador (uma vez por sessão) para repovoar a nuvem.
-      await repushLocal(consultor);
-      return;
-    }
+    const historicos = mergeById(historicoLocal, historicosRemoto);
+    const leadList = mergeById(leadsLocal, leadsRemoto);
 
     window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
     window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
@@ -341,41 +330,23 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
     setCloudStale(false);
     window.dispatchEvent(new Event("bhm:historico-updated"));
     window.dispatchEvent(new CustomEvent("bhm:leads-updated"));
+
+    // Auto-cura: qualquer item que só existia localmente (ainda não tinha
+    // chegado na nuvem) é reenviado agora — fecha o buraco de vez, mesmo
+    // que o marcador de "já migrei" estivesse preso de um backend antigo.
+    scheduleCloudSync(
+      "historico",
+      historicos.map((r) => historicoToRow(r, consultor)),
+      consultor,
+    );
+    scheduleCloudSync(
+      "leads",
+      leadList.map((l) => leadToRow(l, consultor)),
+      consultor,
+    );
   } catch (err) {
     console.warn("[cloud-store] leitura da nuvem falhou, usando cache local:", err);
     setCloudStale(true);
-  }
-}
-
-const repushed = new Set<string>();
-
-/**
- * Reenvia para a nuvem tudo que existe neste navegador. Usado quando a nuvem
- * responde vazia mas há dados locais (banco recriado, sync perdido).
- * Roda no máximo uma vez por sessão e por consultor.
- */
-async function repushLocal(consultor: string): Promise<void> {
-  if (!isBrowser() || repushed.has(consultor)) return;
-  repushed.add(consultor);
-  try {
-    const rawHist = window.localStorage.getItem(localKey("historico", consultor));
-    const rawLeads = window.localStorage.getItem(localKey("leads", consultor));
-    const historicos: HistoricoEmpresa[] = rawHist ? JSON.parse(rawHist) : [];
-    const leads: Lead[] = rawLeads ? JSON.parse(rawLeads) : [];
-
-    if (Array.isArray(historicos) && historicos.length) {
-      const rows = historicos.map((r) => historicoToRow(r, consultor));
-      saveHashes(`historico::${consultor}`, {});
-      await pushRows("historico", rows, consultor);
-    }
-    if (Array.isArray(leads) && leads.length) {
-      const rows = leads.map((l) => leadToRow(l, consultor));
-      saveHashes(`leads::${consultor}`, {});
-      await pushRows("leads", rows, consultor);
-    }
-    console.info("[cloud-store] dados locais reenviados para a nuvem.");
-  } catch (err) {
-    console.warn("[cloud-store] falha ao reenviar dados locais:", err);
   }
 }
 
