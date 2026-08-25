@@ -38,6 +38,7 @@ import {
   addBusinessDays,
   archiveLead,
   deleteLead,
+  restoreLead,
   addMarco,
   logAttempt,
   scheduleLeadReturn,
@@ -67,7 +68,7 @@ import {
 } from "@/lib/followup-bridge";
 import { OportunidadesBlock } from "@/components/central/oportunidades-block";
 import { ResultadoReuniaoDialog } from "@/components/central/resultado-reuniao-dialog";
-import { deleteHistoricosByEmpresa } from "@/lib/historico-store";
+import { softDeleteHistoricosByEmpresa, restoreHistoricosByEmpresa } from "@/lib/historico-store";
 import { generateMeetingMinutes } from "@/lib/prospeccao.functions";
 
 import { Link } from "@tanstack/react-router";
@@ -246,6 +247,29 @@ export function LeadDetailDialog({ lead, onClose, onStageChange }: Props) {
             ) : null}
           </DialogDescription>
         </DialogHeader>
+
+        {lead.excluido_em && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+            <span>
+              🗑️ Excluída em {fmtDateTime(lead.excluido_em)}
+              {lead.excluido_motivo ? ` — motivo: ${lead.excluido_motivo}` : " — sem motivo informado"}.
+              Continua salva com todo o histórico.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-rose-300 bg-white text-rose-700 hover:bg-rose-100"
+              onClick={() => {
+                restoreLead(lead.id);
+                restoreHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa });
+                toast.success("Empresa restaurada — histórico preservado");
+                onClose();
+              }}
+            >
+              ↩️ Restaurar
+            </Button>
+          </div>
+        )}
 
         <Tabs defaultValue="etapa">
           <TabsList className="w-full flex-wrap">
@@ -515,13 +539,16 @@ function LeadForm({ lead }: { lead: Lead }) {
           variant="ghost"
           className="ml-auto text-rose-600 hover:text-rose-700"
           onClick={() => {
-            if (!confirm(`Excluir definitivamente "${lead.empresa}"? Prefira arquivar para Reativação.`))
-              return;
-            deleteLead(lead.id);
-            toast.success("Lead excluído");
+            const motivo = window.prompt(
+              `Excluir "${lead.empresa}"? A empresa some da esteira, mas fica salva com todo o histórico e pode ser restaurada depois.\n\nMotivo da exclusão (opcional):`,
+            );
+            if (motivo === null) return; // cancelou
+            deleteLead(lead.id, motivo);
+            softDeleteHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa }, motivo);
+            toast.success("Lead excluído — pode ser restaurado na aba \"Excluídas\"");
           }}
         >
-          Excluir definitivamente
+          Excluir
         </Button>
       </div>
     </div>
@@ -853,32 +880,41 @@ function PauseBlock({ lead, obs, onDone }: { lead: Lead; obs: string; onDone: ()
   );
 }
 
-/** Exclusão definitiva — para dados de teste/fictícios. Não confundir com arquivar. */
+/** Exclusão — some da esteira, mas fica salva (com histórico) para restaurar depois. */
 function DeleteBlock({ lead, onDone }: { lead: Lead; onDone: () => void }) {
   const [confirmando, setConfirmando] = useState(false);
+  const [motivo, setMotivo] = useState("");
   return (
     <div className="space-y-2 border-t border-dashed border-rose-200 pt-3">
       <p className="text-[11px] text-muted-foreground">
-        Empresa fictícia ou de teste? A exclusão remove o lead e todo o histórico de ligações — essa
-        ação não pode ser desfeita.
+        A empresa sai da esteira ativa, mas continua salva com todo o histórico de ligações — se
+        precisar, dá pra restaurar depois na aba "Excluídas".
       </p>
       {confirmando ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => {
-              deleteHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa });
-              deleteLead(lead.id);
-              toast.success("Lead e histórico excluídos definitivamente");
-              onDone();
-            }}
-          >
-            Confirmar exclusão definitiva
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirmando(false)}>
-            Cancelar
-          </Button>
+        <div className="space-y-2">
+          <Textarea
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Motivo da exclusão (opcional) — ex.: empresa duplicada, dado de teste, contato errado…"
+            className="min-h-16 text-xs"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                deleteLead(lead.id, motivo);
+                softDeleteHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa }, motivo);
+                toast.success('Lead excluído — pode ser restaurado na aba "Excluídas"');
+                onDone();
+              }}
+            >
+              Confirmar exclusão
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirmando(false)}>
+              Cancelar
+            </Button>
+          </div>
         </div>
       ) : (
         <Button
@@ -887,7 +923,7 @@ function DeleteBlock({ lead, onDone }: { lead: Lead; onDone: () => void }) {
           className="border-rose-300 text-rose-700 hover:bg-rose-50"
           onClick={() => setConfirmando(true)}
         >
-          🗑️ Excluir definitivamente
+          🗑️ Excluir
         </Button>
       )}
     </div>
@@ -1738,3 +1774,4 @@ function LeadTimelineRica({ lead }: { lead: Lead }) {
     </div>
   );
 }
+
