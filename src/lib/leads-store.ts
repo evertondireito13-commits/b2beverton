@@ -644,4 +644,301 @@ export const FUNNEL_STAGES: LeadStatus[] = [
 
 export const STAGE_HINT: Record<LeadStatus, string> = {
   reuniao_agendada: "Reunião marcada — confirmar presença.",
-  res
+  resgate_reuniao: "Não compareceu — resgatar e reagendar.",
+  pos_reuniao: "Enviar ata e acompanhar análise da diretoria.",
+  levantamento_docs: "Coletar EFDs .TXT / procuração e-CAC.",
+  apresentacao_calculos: "Apresentar créditos apurados e aguardar OK.",
+  fechado: "Minuta assinada — iniciar PER/DCOMPs.",
+  perdido: "Arquivado — reabordar no futuro.",
+  nao_qualificado: "Sem fit técnico — não conta como recusa comercial.",
+  pausado: "Decisão adiada — retomar na data combinada.",
+};
+
+export function addBusinessDays(from: Date, days: number): Date {
+  const d = new Date(from);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) added++;
+  }
+  return d;
+}
+
+export type AttemptKind =
+  | "nao_atendeu"
+  | "em_analise"
+  | "ata_enviada"
+  | "reagendar"
+  | "retorno_positivo"
+  | "outro";
+
+export const ATTEMPT_LABEL: Record<AttemptKind, string> = {
+  nao_atendeu: "📵 Não atendeu",
+  em_analise: "🕒 Em análise com a diretoria",
+  ata_enviada: "📨 Ata enviada",
+  reagendar: "📅 Pediu para reagendar",
+  retorno_positivo: "👍 Retorno positivo",
+  outro: "📝 Registro",
+};
+
+export const ATTEMPT_TEXT: Record<AttemptKind, string> = {
+  nao_atendeu: "Tentativa de contato: Cliente não atendeu a ligação.",
+  em_analise: "Status: Proposta e minuta em análise com a diretoria.",
+  ata_enviada: "Ação: Ata da reunião e alinhamentos enviados por e-mail/WhatsApp.",
+  retorno_positivo: "Ação: Recebido retorno positivo do cliente sobre a proposta.",
+  reagendar: "Ação: Solicitado reagendamento de conversa/reunião.",
+  outro: "Registro manual da negociação.",
+};
+
+export function logAttempt(id: string, kind: AttemptKind, detalhe?: string): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  const texto = [ATTEMPT_TEXT[kind], detalhe?.trim()].filter(Boolean).join(" — ");
+  const updated = addMarco(id, {
+    status: lead.status,
+    titulo: ATTEMPT_LABEL[kind],
+    detalhe: texto,
+    categoria: kind === "ata_enviada" ? "comunicacao" : undefined,
+  });
+
+  if (updated && kind === "ata_enviada") {
+    updateLead(id, {
+      ata_enviada_em: new Date().toISOString(),
+      ultima_observacao: texto,
+    });
+  } else if (updated) {
+    updateLead(id, { ultima_observacao: texto });
+  }
+  return listLeads().find((l) => l.id === id) ?? null;
+}
+
+export function registrarComunicacao(
+  id: string,
+  canal: "ata" | "email" | "whatsapp" | "outro",
+  resumo: string,
+): Lead | null {
+  const titulo =
+    canal === "ata"
+      ? "📨 Ata enviada ao cliente"
+      : canal === "email"
+        ? "✉️ E-mail enviado"
+        : canal === "whatsapp"
+          ? "💬 WhatsApp enviado"
+          : "📤 Comunicação enviada";
+  return addMarco(id, { titulo, detalhe: resumo, categoria: "comunicacao" });
+}
+
+export function listComunicacoes(lead: Lead): MarcoEvent[] {
+  const RE = /(ata enviada|e-?mail|whatsapp|proposta enviada|minuta enviada)/i;
+  return [...(lead.timeline ?? [])]
+    .filter((e) => e.categoria === "comunicacao" || RE.test(`${e.titulo} ${e.detalhe ?? ""}`))
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+}
+
+export function scheduleLeadReturn(id: string, scheduledAt: string, detalhe?: string): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  const d = new Date(scheduledAt);
+  const dataFmt = d.toLocaleDateString("pt-BR");
+  updateLead(id, { data_reuniao: d.toISOString() });
+  return addMarco(id, {
+    status: lead.status,
+    titulo: `📅 Próximo retorno agendado para ${dataFmt}`,
+    detalhe: [
+      `Próximo retorno agendado para ${dataFmt} às ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.`,
+      detalhe?.trim(),
+    ]
+      .filter(Boolean)
+      .join(" — "),
+  });
+}
+
+export function archiveLead(id: string, motivo: string, detalhe?: string): Lead | null {
+  const updated = updateLead(id, {
+    status: "perdido",
+    motivo_perda: motivo,
+    ultima_observacao: detalhe || motivo,
+  });
+  if (updated) {
+    addMarco(id, {
+      status: "perdido",
+      titulo: "📦 Arquivado para Reativação Futura",
+      detalhe: `Lead arquivado por motivo: ${[motivo, detalhe?.trim()].filter(Boolean).join(" — ")}`,
+    });
+  }
+  return listLeads().find((l) => l.id === id) ?? null;
+}
+
+export function reactivateLead(id: string, status: LeadStatus = "reuniao_agendada", obs?: string): Lead | null {
+  const updated = updateLead(id, {
+    status,
+    motivo_perda: undefined,
+    ultima_observacao: obs || "Lead reativado para nova abordagem.",
+  });
+  if (updated) addMarco(id, { status, titulo: "♻️ Reativado para nova abordagem", detalhe: obs });
+  return updated;
+}
+
+export function pauseLead(
+  id: string,
+  pausadoAte: string | null,
+  obs?: string,
+  motivos?: string[],
+): Lead | null {
+  const atual = listLeads().find((l) => l.id === id);
+  if (!atual) return null;
+  const anterior: LeadStatus =
+    atual.status === "pausado" ? atual.fase_antes_pausa ?? "reuniao_agendada" : atual.status;
+  const updated = updateLead(id, {
+    status: "pausado",
+    fase_antes_pausa: anterior,
+    pausado_ate: pausadoAte ?? null,
+    pausado_motivo: motivos && motivos.length > 0 ? motivos : undefined,
+    ultima_observacao:
+      obs ||
+      (pausadoAte ? `Decisão adiada — retomar em ${fmtData(pausadoAte)}.` : "Decisão adiada — sem data definida."),
+  });
+  if (updated) {
+    addMarco(id, {
+      status: "pausado",
+      titulo: pausadoAte ? `⏸️ Pausado até ${fmtData(pausadoAte)}` : "⏸️ Pausado (sem data definida)",
+      detalhe: [
+        obs,
+        motivos && motivos.length > 0 ? `Avaliação com: ${motivos.join(", ")}` : "",
+        `Estava em ${LEAD_STATUS_LABEL[anterior]}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    });
+  }
+  return listLeads().find((l) => l.id === id) ?? null;
+}
+
+export function resumeLead(id: string, obs?: string): Lead | null {
+  const atual = listLeads().find((l) => l.id === id);
+  if (!atual) return null;
+  const destino = atual.fase_antes_pausa ?? "reuniao_agendada";
+  const updated = updateLead(id, {
+    status: destino,
+    pausado_ate: null,
+    pausado_motivo: undefined,
+    fase_antes_pausa: undefined,
+    ultima_observacao: obs || "Contato retomado após pausa.",
+  });
+  if (updated)
+    addMarco(id, { status: destino, titulo: "▶️ Retomado após pausa", detalhe: obs });
+  return updated;
+}
+
+export function effectiveStage(lead: Lead): LeadStatus {
+  return lead.status === "pausado" ? lead.fase_antes_pausa ?? "reuniao_agendada" : lead.status;
+}
+
+export function isPauseDue(lead: Lead): boolean {
+  if (lead.status !== "pausado" || !lead.pausado_ate) return false;
+  const t = new Date(lead.pausado_ate).getTime();
+  return Number.isFinite(t) && t <= Date.now();
+}
+
+function fmtData(iso: string): string {
+  const d = new Date(iso);
+  return Number.isFinite(+d) ? d.toLocaleDateString("pt-BR") : iso;
+}
+
+function newFollowUpId(): string {
+  return `lfu_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function listLeadFollowUps(lead: Lead): LeadFollowUp[] {
+  return [...(lead.follow_ups ?? [])].sort(
+    (a, b) => +new Date(a.scheduled_at) - +new Date(b.scheduled_at),
+  );
+}
+
+export function addLeadFollowUp(
+  id: string,
+  input: {
+    scheduled_at: string;
+    canal?: LeadFollowUp["canal"];
+    assunto: string;
+    notas?: string;
+    sincronizarCompromisso?: boolean;
+  },
+): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  const fu: LeadFollowUp = {
+    id: newFollowUpId(),
+    scheduled_at: input.scheduled_at,
+    canal: input.canal ?? "ligacao",
+    assunto: input.assunto,
+    notas: input.notas,
+    done: false,
+    created_at: new Date().toISOString(),
+  };
+  const patch: Partial<Lead> = {
+    follow_ups: [...(lead.follow_ups ?? []), fu],
+    proximo_passo: input.assunto,
+  };
+  if (input.sincronizarCompromisso !== false) patch.data_reuniao = input.scheduled_at;
+  const updated = updateLead(id, patch);
+  addMarco(id, {
+    status: lead.status,
+    titulo: `📌 Follow-up agendado — ${new Date(input.scheduled_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`,
+    detalhe: [LEAD_FOLLOWUP_CANAL_LABEL[fu.canal], input.assunto, input.notas]
+      .filter(Boolean)
+      .join(" · "),
+  });
+  return updated;
+}
+
+export function completeLeadFollowUp(
+  id: string,
+  followUpId: string,
+  resultado?: string,
+): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  const alvo = (lead.follow_ups ?? []).find((f) => f.id === followUpId);
+  const updated = updateLead(id, {
+    follow_ups: (lead.follow_ups ?? []).map((f) =>
+      f.id === followUpId ? { ...f, done: true, done_at: new Date().toISOString() } : f,
+    ),
+  });
+  addMarco(id, {
+    status: lead.status,
+    titulo: "✅ Follow-up realizado",
+    detalhe: [alvo?.assunto, resultado].filter(Boolean).join(" · ") || undefined,
+  });
+  return updated;
+}
+
+export function removeLeadFollowUp(id: string, followUpId: string): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  return updateLead(id, {
+    follow_ups: (lead.follow_ups ?? []).filter((f) => f.id !== followUpId),
+  });
+}
+
+export function rescheduleLeadFollowUp(
+  id: string,
+  followUpId: string,
+  scheduledAt: string,
+  sincronizarCompromisso = true,
+): Lead | null {
+  const lead = listLeads().find((l) => l.id === id);
+  if (!lead) return null;
+  const patch: Partial<Lead> = {
+    follow_ups: (lead.follow_ups ?? []).map((f) =>
+      f.id === followUpId ? { ...f, scheduled_at: scheduledAt, done: false } : f,
+    ),
+  };
+  if (sincronizarCompromisso) patch.data_reuniao = scheduledAt;
+  return updateLead(id, patch);
+}
+
+export function pendingLeadFollowUps(lead: Lead): LeadFollowUp[] {
+  return listLeadFollowUps(lead).filter((f) => !f.done);
+}
