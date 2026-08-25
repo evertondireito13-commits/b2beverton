@@ -13,6 +13,23 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { E2ESimulator } from "@/components/central/e2e-simulator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -33,12 +50,12 @@ import {
   effectiveStage,
   isPauseDue,
 } from "@/lib/leads-store";
+import { deleteHistoricosByEmpresa } from "@/lib/historico-store";
 import { estagnacao, estagnacaoLabel, ESTAGNACAO_RING, ESTAGNACAO_TONE } from "@/lib/lead-activity";
-import { stableUuid } from "@/lib/cloud-store";
 import { WhatsAppQuickButton } from "@/components/central/whatsapp-quick";
 import { pipelineMetrics, formatBRL } from "@/lib/pipeline-metrics";
 import { sendRdStationNote } from "@/lib/prospeccao.functions";
-import { mesclarLeadsDuplicados, deleteLeads as deleteLeadsCloud } from "@/lib/leads.functions";
+import { mesclarLeadsDuplicados } from "@/lib/leads.functions";
 import { listMeetings } from "@/lib/follow-ups.functions";
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
 import { LeadDetailDialog, fmtDateTime } from "@/components/central/lead-detail-dialog";
@@ -92,6 +109,7 @@ export function LeadsCentralPanel() {
   const [mesclando, setMesclando] = useState(false);
   const [verMetricas, setVerMetricas] = useState(false);
   const [verFiltros, setVerFiltros] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const mesclarDuplicados = useCallback(async () => {
     setMesclando(true);
@@ -135,32 +153,6 @@ export function LeadsCentralPanel() {
   const runListMeetings = useServerFn(listMeetings);
 
   const refresh = useCallback(() => setLeads(listLeads()), []);
-
-  const runDeleteLeadsCloud = useServerFn(deleteLeadsCloud);
-
-  // Exclui um lead da Central de Reuniões: remove do cache local e também
-  // da nuvem (senão o próximo carregamento pode "trazer ele de volta",
-  // já que o app agora nunca apaga localmente algo que ainda existe na
-  // nuvem — ver correção do hydrateFromCloud em cloud-store.ts).
-  const handleExcluir = useCallback(
-    async (lead: Lead) => {
-      const ok = window.confirm(
-        `Excluir "${lead.empresa}" da Central de Reuniões? Essa ação não pode ser desfeita.`,
-      );
-      if (!ok) return;
-      deleteLead(lead.id);
-      refresh();
-      window.dispatchEvent(new CustomEvent(LEADS_EVENT));
-      try {
-        const consultor = (getSessionConsultor() ?? getConsultor()) || "shared";
-        await runDeleteLeadsCloud({ data: { consultor, ids: [stableUuid(lead.id)] } });
-      } catch (err) {
-        console.error("Falha ao excluir lead na nuvem:", err);
-        toast.error("Excluído aqui, mas houve um erro ao remover da nuvem. Pode reaparecer ao atualizar.");
-      }
-    },
-    [refresh, runDeleteLeadsCloud],
-  );
 
   const hydrateFromMeetings = useCallback(async () => {
     try {
@@ -374,6 +366,14 @@ export function LeadsCentralPanel() {
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setAddOpen(true)}
+            title="Inclui manualmente qualquer empresa na Central de Reuniões"
+            className="rounded-lg border border-emerald-500/60 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-500/25 dark:text-emerald-300"
+          >
+            ➕ Nova empresa
+          </button>
+          <button
+            type="button"
             disabled={mesclando}
             onClick={mesclarDuplicados}
             title="Consolida leads duplicados da mesma empresa"
@@ -525,7 +525,6 @@ export function LeadsCentralPanel() {
                           lead={lead}
                           draggable
                           onOpen={() => setSelectedId(lead.id)}
-                          onExcluir={() => handleExcluir(lead)}
                         />
                       ))}
                     </ul>
@@ -587,7 +586,114 @@ export function LeadsCentralPanel() {
         onClose={() => setSelectedId(null)}
         onStageChange={notifyRd}
       />
+      <AddCompanyDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdded={() => refresh()}
+      />
     </div>
+  );
+}
+
+/** Inclusão manual de qualquer empresa na Central de Reuniões (fora do fluxo de ligação/RD Station). */
+function AddCompanyDialog({
+  open,
+  onClose,
+  onAdded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const [empresa, setEmpresa] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [contato, setContato] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [status, setStatus] = useState<LeadStatus>("reuniao_agendada");
+
+  function fechar() {
+    setEmpresa("");
+    setCnpj("");
+    setContato("");
+    setTelefone("");
+    setStatus("reuniao_agendada");
+    onClose();
+  }
+
+  function salvar() {
+    if (!empresa.trim()) {
+      toast.error("Informe o nome da empresa");
+      return;
+    }
+    upsertLead({
+      empresa: empresa.trim(),
+      cnpj: cnpj.trim(),
+      contato: contato.trim(),
+      telefone: telefone.trim() || undefined,
+      status,
+      data_reuniao: new Date().toISOString(),
+      // Inclusão manual e explícita: sempre entra, mesmo que essa empresa
+      // tenha sido excluída definitivamente antes.
+      force: true,
+    });
+    toast.success(`${empresa.trim()} incluída na Central de Reuniões`);
+    onAdded();
+    fechar();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && fechar()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>➕ Incluir empresa manualmente</DialogTitle>
+          <DialogDescription>
+            Use para qualquer empresa que você queira colocar na Central de Reuniões — não
+            precisa ter vindo de uma ligação ou de reunião agendada no RD Station.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label>Empresa *</Label>
+            <Input value={empresa} onChange={(e) => setEmpresa(e.target.value)} autoFocus />
+          </div>
+          <div className="space-y-1">
+            <Label>CNPJ (opcional)</Label>
+            <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Decisor (opcional)</Label>
+              <Input value={contato} onChange={(e) => setContato(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Telefone (opcional)</Label>
+              <Input value={telefone} onChange={(e) => setTelefone(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>Fase inicial</Label>
+            <Select value={status} onValueChange={(v) => setStatus(v as LeadStatus)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FUNNEL_STAGES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {LEAD_STATUS_LABEL[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={fechar}>
+            Cancelar
+          </Button>
+          <Button onClick={salvar}>Incluir empresa</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -642,12 +748,10 @@ function StageDroppable({
 function LeadMiniCard({
   lead,
   onOpen,
-  onExcluir,
   draggable = false,
 }: {
   lead: Lead;
   onOpen: () => void;
-  onExcluir?: () => void;
   draggable?: boolean;
 }) {
   const overdue = isOverdue(lead);
@@ -775,19 +879,24 @@ function LeadMiniCard({
               ☎️ Ligar
             </a>
           )}
-          {onExcluir && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onExcluir();
-              }}
-              title="Excluir esta empresa da Central de Reuniões"
-              className="ml-auto rounded-md border border-transparent px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
-            >
-              🗑️ Excluir
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (
+                !confirm(
+                  `Excluir definitivamente "${lead.empresa}"? Isso remove o lead e o histórico de ligações — não pode ser desfeito.`,
+                )
+              )
+                return;
+              deleteHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa });
+              deleteLead(lead.id);
+              toast.success(`${lead.empresa} excluída definitivamente`);
+            }}
+            className="ml-auto rounded-md border border-rose-200 px-1.5 py-0.5 text-[11px] font-semibold text-rose-600 transition hover:bg-rose-50"
+          >
+            🗑️ Excluir
+          </button>
         </div>
       </div>
     </li>
