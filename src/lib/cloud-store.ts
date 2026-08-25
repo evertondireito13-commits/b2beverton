@@ -284,8 +284,16 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
+    // A nuvem pode responder com erro (string/objeto) em vez de lista. Nesse
+    // caso tratamos como falha de leitura e preservamos o cache local.
+    if (!Array.isArray(hist) || !Array.isArray(leads)) {
+      console.warn("[cloud-store] resposta da nuvem em formato inesperado — mantendo cache local.");
+      setCloudStale(true);
+      return;
+    }
+
+    const historicos = hist.map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const leadList = leads.map((r) => rowToLead(r as unknown as LeadRow));
 
     // Trava de segurança: se a nuvem voltou vazia mas já existem dados salvos
     // neste navegador, isso é sinal de problema (nome do consultor não bateu,
