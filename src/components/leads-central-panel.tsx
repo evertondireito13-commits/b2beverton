@@ -13,23 +13,6 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { E2ESimulator } from "@/components/central/e2e-simulator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -40,17 +23,16 @@ import {
   LeadStatus,
   STAGE_HINT,
   daysInStage,
-  deleteLead,
   findLead,
   isOverdue,
   listLeads,
+  listLeadsExcluidos,
   pendingLeadFollowUps,
   updateLead,
   upsertLead,
   effectiveStage,
   isPauseDue,
 } from "@/lib/leads-store";
-import { deleteHistoricosByEmpresa } from "@/lib/historico-store";
 import { estagnacao, estagnacaoLabel, ESTAGNACAO_RING, ESTAGNACAO_TONE } from "@/lib/lead-activity";
 import { WhatsAppQuickButton } from "@/components/central/whatsapp-quick";
 import { pipelineMetrics, formatBRL } from "@/lib/pipeline-metrics";
@@ -94,8 +76,9 @@ const STAGE_SLA_DAYS: Partial<Record<LeadStatus, number>> = {
 
 export function LeadsCentralPanel() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [excluidos, setExcluidos] = useState<Lead[]>([]);
   const [busca, setBusca] = useState("");
-  const [aba, setAba] = useState<"esteira" | "reativacao">("esteira");
+  const [aba, setAba] = useState<"esteira" | "reativacao" | "excluidas">("esteira");
   const [fase, setFase] = useState<LeadStatus | "todas">("todas");
   const [colapsadas, setColapsadas] = useState<Partial<Record<LeadStatus, boolean>>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -109,7 +92,6 @@ export function LeadsCentralPanel() {
   const [mesclando, setMesclando] = useState(false);
   const [verMetricas, setVerMetricas] = useState(false);
   const [verFiltros, setVerFiltros] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
 
   const mesclarDuplicados = useCallback(async () => {
     setMesclando(true);
@@ -152,7 +134,10 @@ export function LeadsCentralPanel() {
   const runRd = useServerFn(sendRdStationNote);
   const runListMeetings = useServerFn(listMeetings);
 
-  const refresh = useCallback(() => setLeads(listLeads()), []);
+  const refresh = useCallback(() => {
+    setLeads(listLeads());
+    setExcluidos(listLeadsExcluidos());
+  }, []);
 
   const hydrateFromMeetings = useCallback(async () => {
     try {
@@ -255,7 +240,8 @@ export function LeadsCentralPanel() {
     return map;
   }, [visiveis]);
 
-  const selected = leads.find((l) => l.id === selectedId) ?? null;
+  const selected =
+    leads.find((l) => l.id === selectedId) ?? excluidos.find((l) => l.id === selectedId) ?? null;
 
   /**
    * Atualização otimista: a fase muda na tela na hora; se a sincronização com o
@@ -355,6 +341,7 @@ export function LeadsCentralPanel() {
               Esteira ativa ({visiveis.length - arquivados.length})
             </TabsTrigger>
             <TabsTrigger value="reativacao">Reativação futura ({arquivados.length})</TabsTrigger>
+            <TabsTrigger value="excluidas">Excluídas ({excluidos.length})</TabsTrigger>
           </TabsList>
         </Tabs>
         <Input
@@ -364,14 +351,6 @@ export function LeadsCentralPanel() {
           className="h-9 w-full max-w-xs"
         />
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            title="Inclui manualmente qualquer empresa na Central de Reuniões"
-            className="rounded-lg border border-emerald-500/60 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-500/25 dark:text-emerald-300"
-          >
-            ➕ Nova empresa
-          </button>
           <button
             type="button"
             disabled={mesclando}
@@ -545,7 +524,7 @@ export function LeadsCentralPanel() {
 
 
         </div>
-      ) : (
+      ) : aba === "reativacao" ? (
 
         <ul className="space-y-2">
           {arquivados.length === 0 && (
@@ -579,6 +558,38 @@ export function LeadsCentralPanel() {
             </li>
           ))}
         </ul>
+      ) : (
+
+        <ul className="space-y-2">
+          {excluidos.length === 0 && (
+            <li className="rounded-xl border border-dashed border-border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+              Nenhuma empresa excluída. Ao excluir um lead, ele vem para cá com todo o histórico
+              preservado — dá pra restaurar quando quiser.
+            </li>
+          )}
+          {excluidos.map((lead) => (
+            <li key={lead.id}>
+              <button
+                type="button"
+                onClick={() => setSelectedId(lead.id)}
+                className="w-full rounded-xl border border-border bg-card p-3 text-left transition hover:border-rose-400/40 hover:shadow-sm"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-navy-deep">{lead.empresa}</span>
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                    {lead.excluido_motivo || "Sem motivo informado"}
+                  </span>
+                  <span className="ml-auto text-[11px] text-muted-foreground">
+                    Excluída em {lead.excluido_em ? fmtDateTime(lead.excluido_em) : "—"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  Toque para ver o histórico ou restaurar ↩️
+                </p>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
 
       <LeadDetailDialog
@@ -586,114 +597,7 @@ export function LeadsCentralPanel() {
         onClose={() => setSelectedId(null)}
         onStageChange={notifyRd}
       />
-      <AddCompanyDialog
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onAdded={() => refresh()}
-      />
     </div>
-  );
-}
-
-/** Inclusão manual de qualquer empresa na Central de Reuniões (fora do fluxo de ligação/RD Station). */
-function AddCompanyDialog({
-  open,
-  onClose,
-  onAdded,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [empresa, setEmpresa] = useState("");
-  const [cnpj, setCnpj] = useState("");
-  const [contato, setContato] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [status, setStatus] = useState<LeadStatus>("reuniao_agendada");
-
-  function fechar() {
-    setEmpresa("");
-    setCnpj("");
-    setContato("");
-    setTelefone("");
-    setStatus("reuniao_agendada");
-    onClose();
-  }
-
-  function salvar() {
-    if (!empresa.trim()) {
-      toast.error("Informe o nome da empresa");
-      return;
-    }
-    upsertLead({
-      empresa: empresa.trim(),
-      cnpj: cnpj.trim(),
-      contato: contato.trim(),
-      telefone: telefone.trim() || undefined,
-      status,
-      data_reuniao: new Date().toISOString(),
-      // Inclusão manual e explícita: sempre entra, mesmo que essa empresa
-      // tenha sido excluída definitivamente antes.
-      force: true,
-    });
-    toast.success(`${empresa.trim()} incluída na Central de Reuniões`);
-    onAdded();
-    fechar();
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => !v && fechar()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>➕ Incluir empresa manualmente</DialogTitle>
-          <DialogDescription>
-            Use para qualquer empresa que você queira colocar na Central de Reuniões — não
-            precisa ter vindo de uma ligação ou de reunião agendada no RD Station.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label>Empresa *</Label>
-            <Input value={empresa} onChange={(e) => setEmpresa(e.target.value)} autoFocus />
-          </div>
-          <div className="space-y-1">
-            <Label>CNPJ (opcional)</Label>
-            <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Decisor (opcional)</Label>
-              <Input value={contato} onChange={(e) => setContato(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Telefone (opcional)</Label>
-              <Input value={telefone} onChange={(e) => setTelefone(e.target.value)} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>Fase inicial</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as LeadStatus)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FUNNEL_STAGES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {LEAD_STATUS_LABEL[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={fechar}>
-            Cancelar
-          </Button>
-          <Button onClick={salvar}>Incluir empresa</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -879,24 +783,6 @@ function LeadMiniCard({
               ☎️ Ligar
             </a>
           )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (
-                !confirm(
-                  `Excluir definitivamente "${lead.empresa}"? Isso remove o lead e o histórico de ligações — não pode ser desfeito.`,
-                )
-              )
-                return;
-              deleteHistoricosByEmpresa({ cnpj: lead.cnpj, empresaNome: lead.empresa });
-              deleteLead(lead.id);
-              toast.success(`${lead.empresa} excluída definitivamente`);
-            }}
-            className="ml-auto rounded-md border border-rose-200 px-1.5 py-0.5 text-[11px] font-semibold text-rose-600 transition hover:bg-rose-50"
-          >
-            🗑️ Excluir
-          </button>
         </div>
       </div>
     </li>
