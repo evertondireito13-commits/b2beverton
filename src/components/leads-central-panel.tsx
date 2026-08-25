@@ -23,6 +23,7 @@ import {
   LeadStatus,
   STAGE_HINT,
   daysInStage,
+  deleteLead,
   findLead,
   isOverdue,
   listLeads,
@@ -33,10 +34,11 @@ import {
   isPauseDue,
 } from "@/lib/leads-store";
 import { estagnacao, estagnacaoLabel, ESTAGNACAO_RING, ESTAGNACAO_TONE } from "@/lib/lead-activity";
+import { stableUuid } from "@/lib/cloud-store";
 import { WhatsAppQuickButton } from "@/components/central/whatsapp-quick";
 import { pipelineMetrics, formatBRL } from "@/lib/pipeline-metrics";
 import { sendRdStationNote } from "@/lib/prospeccao.functions";
-import { mesclarLeadsDuplicados } from "@/lib/leads.functions";
+import { mesclarLeadsDuplicados, deleteLeads as deleteLeadsCloud } from "@/lib/leads.functions";
 import { listMeetings } from "@/lib/follow-ups.functions";
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
 import { LeadDetailDialog, fmtDateTime } from "@/components/central/lead-detail-dialog";
@@ -133,6 +135,32 @@ export function LeadsCentralPanel() {
   const runListMeetings = useServerFn(listMeetings);
 
   const refresh = useCallback(() => setLeads(listLeads()), []);
+
+  const runDeleteLeadsCloud = useServerFn(deleteLeadsCloud);
+
+  // Exclui um lead da Central de Reuniões: remove do cache local e também
+  // da nuvem (senão o próximo carregamento pode "trazer ele de volta",
+  // já que o app agora nunca apaga localmente algo que ainda existe na
+  // nuvem — ver correção do hydrateFromCloud em cloud-store.ts).
+  const handleExcluir = useCallback(
+    async (lead: Lead) => {
+      const ok = window.confirm(
+        `Excluir "${lead.empresa}" da Central de Reuniões? Essa ação não pode ser desfeita.`,
+      );
+      if (!ok) return;
+      deleteLead(lead.id);
+      refresh();
+      window.dispatchEvent(new CustomEvent(LEADS_EVENT));
+      try {
+        const consultor = (getSessionConsultor() ?? getConsultor()) || "shared";
+        await runDeleteLeadsCloud({ data: { consultor, ids: [stableUuid(lead.id)] } });
+      } catch (err) {
+        console.error("Falha ao excluir lead na nuvem:", err);
+        toast.error("Excluído aqui, mas houve um erro ao remover da nuvem. Pode reaparecer ao atualizar.");
+      }
+    },
+    [refresh, runDeleteLeadsCloud],
+  );
 
   const hydrateFromMeetings = useCallback(async () => {
     try {
@@ -497,6 +525,7 @@ export function LeadsCentralPanel() {
                           lead={lead}
                           draggable
                           onOpen={() => setSelectedId(lead.id)}
+                          onExcluir={() => handleExcluir(lead)}
                         />
                       ))}
                     </ul>
@@ -613,10 +642,12 @@ function StageDroppable({
 function LeadMiniCard({
   lead,
   onOpen,
+  onExcluir,
   draggable = false,
 }: {
   lead: Lead;
   onOpen: () => void;
+  onExcluir?: () => void;
   draggable?: boolean;
 }) {
   const overdue = isOverdue(lead);
@@ -743,6 +774,19 @@ function LeadMiniCard({
             >
               ☎️ Ligar
             </a>
+          )}
+          {onExcluir && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onExcluir();
+              }}
+              title="Excluir esta empresa da Central de Reuniões"
+              className="ml-auto rounded-md border border-transparent px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"
+            >
+              🗑️ Excluir
+            </button>
           )}
         </div>
       </div>
@@ -897,3 +941,4 @@ function LeadsTable({
 
   );
 }
+
