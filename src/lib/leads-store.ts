@@ -3,6 +3,7 @@
 // automaticamente do Follow-up Frio (em_followup_frio=false).
 
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
+import { markLeadDeleted, unmarkLeadDeleted, isLeadDeleted } from "@/lib/leads-tombstones";
 
 export type LeadStatus =
   | "reuniao_agendada"
@@ -29,6 +30,7 @@ export const AREA_NEGOCIACAO_LABEL: Record<AreaNegociacao, string> = {
   reestruturacao_financeira: "📉 Reestruturação financeira",
 };
 
+/** Documentos pedidos na coleta variam conforme a área negociada. */
 export const AREA_COLETA_LABEL: Record<AreaNegociacao, string> = {
   tributario: "Modalidade de coleta (SPED / e-CAC)",
   reestruturacao_financeira: "Modalidade de coleta (Balanços / DRE)",
@@ -36,17 +38,20 @@ export const AREA_COLETA_LABEL: Record<AreaNegociacao, string> = {
 
 export type ModalidadeColeta = "procuracao_ecac" | "arquivos_txt";
 
+/** Marcos do funil BHM (Central de Reuniões). */
 export type MarcoId = 1 | 2 | 3 | 4;
 
 export type MarcoEvent = {
   id: string;
-  at: string;
+  at: string; // ISO
   marco: MarcoId;
   status: LeadStatus;
   titulo: string;
   detalhe?: string;
+  /** "comunicacao": algo efetivamente enviado ao cliente (ata, e-mail, WhatsApp). */
   categoria?: "comunicacao";
 };
+
 
 export const MARCO_LABEL: Record<MarcoId, string> = {
   1: "📅 Marco 1 — Reunião",
@@ -55,6 +60,7 @@ export const MARCO_LABEL: Record<MarcoId, string> = {
   4: "📝 Marco 4 — Fechamento / Minuta",
 };
 
+/** Mapeia o estágio atual para o marco correspondente da negociação. */
 export function marcoDoStatus(status: LeadStatus): MarcoId {
   switch (status) {
     case "reuniao_agendada":
@@ -76,9 +82,10 @@ export function marcoDoStatus(status: LeadStatus): MarcoId {
   }
 }
 
+/** Retorno agendado de um lead que já está na Central de Reuniões. */
 export type LeadFollowUp = {
   id: string;
-  scheduled_at: string;
+  scheduled_at: string; // ISO
   canal: "ligacao" | "whatsapp" | "email" | "reuniao";
   assunto: string;
   notas?: string;
@@ -94,9 +101,10 @@ export const LEAD_FOLLOWUP_CANAL_LABEL: Record<LeadFollowUp["canal"], string> = 
   reuniao: "🤝 Reunião",
 };
 
+/** Uma anotação de ata (bloco de notas): texto e/ou arquivo anexado. */
 export type AtaEntrada = {
   id: string;
-  criadoEm: string;
+  criadoEm: string; // ISO
   texto?: string;
   pdfBase64?: string;
   pdfNome?: string;
@@ -115,41 +123,66 @@ export type Lead = {
   rd_deal_id: string;
   status: LeadStatus;
   em_followup_frio: boolean;
-  data_reuniao: string;
+  data_reuniao: string; // ISO — próximo compromisso
   ultima_observacao: string;
   motivo_perda?: string;
-  stage_since?: string;
-  reagendamentos?: number;
+  stage_since?: string; // ISO — momento em que o lead entrou no status atual (SLA)
+  reagendamentos?: number; // contador de reagendamentos consecutivos
+  /** Data combinada para retomar o contato (status "pausado"). */
   pausado_ate?: string | null;
+  /** Fase em que o lead estava antes de ser pausado (para retomar de onde parou). */
   fase_antes_pausa?: LeadStatus;
+  /** Quem está avaliando a proposta durante a pausa (sócios, contabilidade, jurídico). */
   pausado_motivo?: string[];
+  /** Quantas vezes o cliente não compareceu a uma reunião marcada. */
   no_show_count?: number;
+  /** True quando o fechamento aconteceu na própria reunião (sem passar pelo funil). */
   fechamento_direto?: boolean;
+  /** Natureza da negociação — cliente direto ou parceria operacional. */
   tipo_negociacao?: TipoNegociacao;
+  /** Área do trabalho negociado — muda os documentos pedidos na coleta. */
   area_negociacao?: AreaNegociacao;
+  /** Evolução da negociação — marcos cronológicos por etapa. */
   timeline?: MarcoEvent[];
+  /**
+   * Follow-ups da negociação. Empresas que já agendaram reunião NÃO usam a
+   * fila fria (/followup): todo retorno combinado fica registrado aqui,
+   * dentro da Central de Reuniões.
+   */
   follow_ups?: LeadFollowUp[];
+  // Estágio 2 → 3 (Pós-Reunião & Coleta)
   ata_executiva?: string;
-  ata_enviada_em?: string;
+  ata_enviada_em?: string; // ISO — quando a ata foi enviada ao cliente
+  /** Ata anexada em arquivo (PDF/DOC) — alternativa ou complemento ao texto. */
   ata_arquivo?: { nome: string; tipo: string; dados: string; anexado_em: string } | null;
+  /** Bloco de notas da ata — cada "Salvar" cria uma entrada, nada é sobrescrito. */
   ata_entradas?: AtaEntrada[];
+
+  /** ISO — quando o convite do Google Calendar foi enviado para esta reunião. */
   convite_calendario_em?: string | null;
   modalidade_coleta?: ModalidadeColeta;
-  docs_recebidos_em?: string;
+  docs_recebidos_em?: string; // ISO — dispara SLA de 7 dias úteis para cálculos
+  // Estágio 4 (Apresentação de Cálculos)
   valor_credito?: number;
-  percentual_honorarios?: number;
+  percentual_honorarios?: number; // 25 ou 30
+  /** Teses/oportunidades apuradas (crédito + SELIC) por empresa. */
   oportunidades?: LeadOportunidade[];
+  /** Diagnósticos, planilhas e propostas anexadas (links). */
   anexos?: LeadAnexo[];
+  /** % de comissão do consultor sobre os honorários BHM (padrão 30%). */
   comissao_percentual?: number;
+  /** Data de assinatura do contrato/minuta — base da comissão realizada. */
   contrato_assinado_em?: string;
   updated_at: string;
 };
 
+/** Uma tese tributária apurada nos cálculos (ex.: exclusão PIS/COFINS da base). */
 export type LeadOportunidade = {
   id: string;
   tese: string;
   credito: number;
   selic: number;
+  /** % de honorários específico desta tese (fallback: o do lead). */
   percentual_honorarios?: number;
   situacao: "apurada" | "apresentada" | "aprovada" | "descartada";
   observacao?: string;
@@ -179,18 +212,21 @@ export const ANEXO_TIPO_LABEL: Record<LeadAnexo["tipo"], string> = {
   outro: "📎 Outro",
 };
 
+/** Comissão padrão do consultor sobre os honorários da BHM. */
 export const COMISSAO_PADRAO = 30;
 
 export function oportunidadeTotal(o: LeadOportunidade): number {
   return (o.credito || 0) + (o.selic || 0);
 }
 
+/** Crédito total do lead: soma das teses ativas, ou o valor manual. */
 export function creditoTotal(lead: Lead): number {
   const ativas = (lead.oportunidades ?? []).filter((o) => o.situacao !== "descartada");
   if (ativas.length > 0) return ativas.reduce((s, o) => s + oportunidadeTotal(o), 0);
   return lead.valor_credito ?? 0;
 }
 
+/** Honorários estimados da BHM (por tese quando houver percentual próprio). */
 export function honorariosBHM(lead: Lead): number {
   const padrao = lead.percentual_honorarios ?? 25;
   const ativas = (lead.oportunidades ?? []).filter((o) => o.situacao !== "descartada");
@@ -203,6 +239,7 @@ export function honorariosBHM(lead: Lead): number {
   return ((lead.valor_credito ?? 0) * padrao) / 100;
 }
 
+/** Comissão do consultor (padrão 30% sobre os honorários da BHM). */
 export function comissaoConsultor(lead: Lead): number {
   return (honorariosBHM(lead) * (lead.comissao_percentual ?? COMISSAO_PADRAO)) / 100;
 }
@@ -278,6 +315,8 @@ export function removeAnexo(id: string, anexoId: string): Lead | null {
   return updateLead(id, { anexos: (lead.anexos ?? []).filter((a) => a.id !== anexoId) });
 }
 
+
+
 const BASE_KEY = "bhm-leads-central";
 export const LEADS_EVENT = "bhm:leads-updated";
 
@@ -291,6 +330,8 @@ function safeParse(raw: string | null): Lead[] {
   try {
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
+    // Migração: "Resgate de Reunião" deixou de ser fase própria do funil —
+    // vira uma situação dentro de "Reunião Agendada" (no_show_count/tag).
     return (arr as Lead[]).map((l) =>
       l?.status === "resgate_reuniao" ? { ...l, status: "reuniao_agendada" as LeadStatus } : l,
     );
@@ -299,10 +340,13 @@ function safeParse(raw: string | null): Lead[] {
   }
 }
 
+
 function normalizeCnpj(v: string): string {
   return (v ?? "").replace(/\D/g, "");
 }
 
+/** Normaliza nome de empresa só para efeito de comparação — remove acento,
+ * pontuação e espaços duplicados. Nunca usar isso para exibir ou salvar. */
 export function normalizeNomeEmpresa(v: string): string {
   return (v ?? "")
     .normalize("NFD")
@@ -339,70 +383,33 @@ function findIndex(list: Lead[], cnpj: string, empresa: string): number {
   return list.findIndex((l) => normalizeNomeEmpresa(l.empresa) === nome);
 }
 
+/** Busca um lead já existente por CNPJ (>=8 dígitos) ou nome exato. */
 export function findLead(empresa?: string | null, cnpj?: string | null): Lead | null {
   const list = listLeads();
   const idx = findIndex(list, cnpj ?? "", empresa ?? "");
   return idx >= 0 ? list[idx] : null;
 }
 
-// ==============================================================
-// Memória de exclusões — evita que a sincronização de reuniões
-// "ressuscite" uma empresa que foi apagada de propósito no app.
-// ==============================================================
-
-const DELETED_KEY = "bhm-leads-deleted-signatures";
-
-function deletedKey(): string {
-  const c = (getSessionConsultor() ?? getConsultor()) || "shared";
-  return `${DELETED_KEY}::${c}`;
-}
-
-type DeletedSignature = { cnpj: string; nome: string; deleted_at: string };
-
-function listDeletedSignatures(): DeletedSignature[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(deletedKey());
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistDeletedSignatures(list: DeletedSignature[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(deletedKey(), JSON.stringify(list));
-}
-
-function markAsDeleted(cnpj: string, empresa: string) {
-  const list = listDeletedSignatures();
-  list.push({
-    cnpj: normalizeCnpj(cnpj),
-    nome: normalizeNomeEmpresa(empresa),
-    deleted_at: new Date().toISOString(),
-  });
-  persistDeletedSignatures(list);
-}
-
-export function isLeadDeletedSignature(empresa?: string | null, cnpj?: string | null): boolean {
-  const digits = normalizeCnpj(cnpj ?? "");
-  const nome = normalizeNomeEmpresa(empresa ?? "");
-  return listDeletedSignatures().some(
-    (d) =>
-      (digits.length >= 8 && d.cnpj.length >= 8 && d.cnpj === digits) ||
-      (!!nome && d.nome === nome),
-  );
-}
-
 export type UpsertLeadInput = Partial<Lead> & {
   empresa: string;
   cnpj?: string;
+  /** true = inclusão manual e explícita do usuário: sempre cria/atualiza e
+   * libera uma exclusão definitiva anterior. Sem isso, uma empresa excluída
+   * não é recriada sozinha (ex.: sincronização automática com o RD Station). */
+  force?: boolean;
 };
 
-export function upsertLead(input: UpsertLeadInput): Lead {
+export function upsertLead(input: UpsertLeadInput): Lead | null {
   const list = listLeads();
   const idx = findIndex(list, input.cnpj ?? "", input.empresa);
+  if (idx < 0) {
+    if (input.force) {
+      unmarkLeadDeleted(input.empresa, input.cnpj);
+    } else if (isLeadDeleted(input.empresa, input.cnpj)) {
+      // Empresa excluída definitivamente pelo usuário — não recriar sozinho.
+      return null;
+    }
+  }
   const now = new Date().toISOString();
   const base: Lead =
     idx >= 0
@@ -420,11 +427,13 @@ export function upsertLead(input: UpsertLeadInput): Lead {
           ultima_observacao: "",
           updated_at: now,
         };
+  const { force: _force, ...inputData } = input;
   const merged: Lead = {
     ...base,
-    ...input,
+    ...inputData,
     empresa: input.empresa || base.empresa,
     cnpj: input.cnpj ?? base.cnpj,
+    // ISOLAMENTO: entrou na Central de Reuniões => sai de TODA fila fria.
     em_followup_frio: false,
     timeline: base.timeline ?? [],
     updated_at: now,
@@ -470,6 +479,7 @@ function appendMarco(
   ];
 }
 
+/** Registra manualmente um marco na evolução da negociação. */
 export function addMarco(
   id: string,
   ev: {
@@ -498,6 +508,7 @@ export function addMarco(
   return updated;
 }
 
+
 export function updateLead(id: string, patch: Partial<Lead>): Lead | null {
   const list = listLeads();
   const idx = list.findIndex((l) => l.id === id);
@@ -513,6 +524,7 @@ export function updateLead(id: string, patch: Partial<Lead>): Lead | null {
     reagendamentos:
       dateChanged && !statusChanged ? (prev.reagendamentos ?? 0) + 1 : prev.reagendamentos ?? 0,
   };
+  // ISOLAMENTO: lead da Central nunca volta para a fila fria enquanto ativo.
   updated.em_followup_frio = false;
 
   if (statusChanged) {
@@ -558,14 +570,19 @@ export function updateLead(id: string, patch: Partial<Lead>): Lead | null {
 export function deleteLead(id: string): void {
   const list = listLeads();
   const alvo = list.find((l) => l.id === id);
-  if (alvo) markAsDeleted(alvo.cnpj, alvo.empresa);
+  // Registra a exclusão definitivamente ANTES de remover: sem isso a
+  // sincronização automática com o RD Station recria a empresa sozinha no
+  // próximo carregamento (ver leads-tombstones.ts).
+  if (alvo) markLeadDeleted(alvo.empresa, alvo.cnpj);
   persist(list.filter((l) => l.id !== id));
 }
 
+/** Leads que ocupam a Central de Reuniões (todos, exceto perdidos que voltam à nutrição). */
 function isolatedLeads(): Lead[] {
   return listLeads().filter((l) => l.status !== "perdido");
 }
 
+/** CNPJs isolados na Central — usado para filtrar as filas frias/follow-up. */
 export function getExcludedFollowUpCnpjs(): Set<string> {
   return new Set(
     isolatedLeads()
@@ -582,6 +599,7 @@ export function getExcludedFollowUpCompanyNames(): Set<string> {
   );
 }
 
+/** True se a empresa está sob gestão exclusiva da Central de Reuniões. */
 export function isLeadIsolated(empresa?: string | null, cnpj?: string | null): boolean {
   const digits = normalizeCnpj(cnpj ?? "");
   const nome = (empresa ?? "").trim().toLowerCase();
@@ -591,6 +609,8 @@ export function isLeadIsolated(empresa?: string | null, cnpj?: string | null): b
       (!!nome && l.empresa.trim().toLowerCase() === nome),
   );
 }
+
+
 
 export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = {
   reuniao_agendada: "📅 Reunião Agendada",
@@ -616,12 +636,14 @@ export const LEAD_STATUS_TONE: Record<LeadStatus, string> = {
   pausado: "bg-slate-200 text-slate-700 border-slate-300",
 };
 
+/** Dias corridos desde que o lead entrou no status atual. */
 export function daysInStage(lead: Lead): number {
   const since = lead.stage_since ?? lead.updated_at;
   const ms = Date.now() - new Date(since).getTime();
   return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
 }
 
+/** True se o próximo compromisso já passou. */
 export function isOverdue(lead: Lead): boolean {
   if (
     lead.status === "fechado" ||
@@ -634,6 +656,10 @@ export function isOverdue(lead: Lead): boolean {
   return Number.isFinite(d) && d < Date.now();
 }
 
+// ==============================================================
+// Funil visual — ordem das fases ativas da Central de Reuniões.
+// "perdido" não é uma fase: é o arquivo de Reativação Futura.
+// ==============================================================
 export const FUNNEL_STAGES: LeadStatus[] = [
   "reuniao_agendada",
   "pos_reuniao",
@@ -641,6 +667,7 @@ export const FUNNEL_STAGES: LeadStatus[] = [
   "apresentacao_calculos",
   "fechado",
 ];
+
 
 export const STAGE_HINT: Record<LeadStatus, string> = {
   reuniao_agendada: "Reunião marcada — confirmar presença.",
@@ -654,6 +681,7 @@ export const STAGE_HINT: Record<LeadStatus, string> = {
   pausado: "Decisão adiada — retomar na data combinada.",
 };
 
+/** Soma dias úteis (seg–sex) a uma data preservando o horário. */
 export function addBusinessDays(from: Date, days: number): Date {
   const d = new Date(from);
   let added = 0;
@@ -682,6 +710,7 @@ export const ATTEMPT_LABEL: Record<AttemptKind, string> = {
   outro: "📝 Registro",
 };
 
+/** Texto padrão gravado na linha do tempo para cada ação rápida. */
 export const ATTEMPT_TEXT: Record<AttemptKind, string> = {
   nao_atendeu: "Tentativa de contato: Cliente não atendeu a ligação.",
   em_analise: "Status: Proposta e minuta em análise com a diretoria.",
@@ -691,6 +720,7 @@ export const ATTEMPT_TEXT: Record<AttemptKind, string> = {
   outro: "Registro manual da negociação.",
 };
 
+/** Registra uma tentativa/contato rápido na timeline sem mudar de fase. */
 export function logAttempt(id: string, kind: AttemptKind, detalhe?: string): Lead | null {
   const lead = listLeads().find((l) => l.id === id);
   if (!lead) return null;
@@ -713,6 +743,7 @@ export function logAttempt(id: string, kind: AttemptKind, detalhe?: string): Lea
   return listLeads().find((l) => l.id === id) ?? null;
 }
 
+/** Registra algo enviado ao cliente (ata, e-mail, WhatsApp) na aba Comunicações. */
 export function registrarComunicacao(
   id: string,
   canal: "ata" | "email" | "whatsapp" | "outro",
@@ -729,6 +760,7 @@ export function registrarComunicacao(
   return addMarco(id, { titulo, detalhe: resumo, categoria: "comunicacao" });
 }
 
+/** Entradas da timeline que representam comunicações enviadas ao cliente. */
 export function listComunicacoes(lead: Lead): MarcoEvent[] {
   const RE = /(ata enviada|e-?mail|whatsapp|proposta enviada|minuta enviada)/i;
   return [...(lead.timeline ?? [])]
@@ -736,6 +768,10 @@ export function listComunicacoes(lead: Lead): MarcoEvent[] {
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }
 
+/**
+ * Agenda o próximo retorno do lead: move o compromisso e grava a linha do
+ * tempo com o texto padrão "Próximo retorno agendado para DD/MM/AAAA".
+ */
 export function scheduleLeadReturn(id: string, scheduledAt: string, detalhe?: string): Lead | null {
   const lead = listLeads().find((l) => l.id === id);
   if (!lead) return null;
@@ -754,6 +790,7 @@ export function scheduleLeadReturn(id: string, scheduledAt: string, detalhe?: st
   });
 }
 
+/** Arquiva o lead na aba de Reativação Futura (nunca exclui). */
 export function archiveLead(id: string, motivo: string, detalhe?: string): Lead | null {
   const updated = updateLead(id, {
     status: "perdido",
@@ -770,6 +807,8 @@ export function archiveLead(id: string, motivo: string, detalhe?: string): Lead 
   return listLeads().find((l) => l.id === id) ?? null;
 }
 
+
+/** Traz um lead arquivado de volta para a esteira ativa. */
 export function reactivateLead(id: string, status: LeadStatus = "reuniao_agendada", obs?: string): Lead | null {
   const updated = updateLead(id, {
     status,
@@ -780,6 +819,10 @@ export function reactivateLead(id: string, status: LeadStatus = "reuniao_agendad
   return updated;
 }
 
+/**
+ * Pausa a negociação (cliente não recusou, só adiou a decisão).
+ * Guarda a fase atual para retomar exatamente de onde parou.
+ */
 export function pauseLead(
   id: string,
   pausadoAte: string | null,
@@ -815,6 +858,7 @@ export function pauseLead(
   return listLeads().find((l) => l.id === id) ?? null;
 }
 
+/** Retoma um lead pausado, voltando para a fase em que estava. */
 export function resumeLead(id: string, obs?: string): Lead | null {
   const atual = listLeads().find((l) => l.id === id);
   if (!atual) return null;
@@ -831,10 +875,12 @@ export function resumeLead(id: string, obs?: string): Lead | null {
   return updated;
 }
 
+/** Fase visual do lead — pausado aparece na coluna em que estava. */
 export function effectiveStage(lead: Lead): LeadStatus {
   return lead.status === "pausado" ? lead.fase_antes_pausa ?? "reuniao_agendada" : lead.status;
 }
 
+/** True quando a data de retomada já chegou/passou. */
 export function isPauseDue(lead: Lead): boolean {
   if (lead.status !== "pausado" || !lead.pausado_ate) return false;
   const t = new Date(lead.pausado_ate).getTime();
@@ -845,6 +891,12 @@ function fmtData(iso: string): string {
   const d = new Date(iso);
   return Number.isFinite(+d) ? d.toLocaleDateString("pt-BR") : iso;
 }
+
+// ==============================================================
+// Follow-ups da Central de Reuniões
+// Leads que já agendaram reunião nunca voltam para a fila fria: todos os
+// retornos combinados ficam registrados dentro do próprio lead.
+// ==============================================================
 
 function newFollowUpId(): string {
   return `lfu_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -863,6 +915,7 @@ export function addLeadFollowUp(
     canal?: LeadFollowUp["canal"];
     assunto: string;
     notas?: string;
+    /** Também move o próximo compromisso do lead para esta data. */
     sincronizarCompromisso?: boolean;
   },
 ): Lead | null {
@@ -922,6 +975,7 @@ export function removeLeadFollowUp(id: string, followUpId: string): Lead | null 
   });
 }
 
+/** Move a data de um follow-up do lead (reagendamento vindo de outra tela). */
 export function rescheduleLeadFollowUp(
   id: string,
   followUpId: string,
@@ -939,6 +993,8 @@ export function rescheduleLeadFollowUp(
   return updateLead(id, patch);
 }
 
+
+/** Follow-ups pendentes e vencidos do lead (usado para alertas na Central). */
 export function pendingLeadFollowUps(lead: Lead): LeadFollowUp[] {
   return listLeadFollowUps(lead).filter((f) => !f.done);
 }
