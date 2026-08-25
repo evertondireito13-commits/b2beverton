@@ -3,7 +3,6 @@
 // automaticamente do Follow-up Frio (em_followup_frio=false).
 
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
-import { markLeadDeleted, unmarkLeadDeleted, isLeadDeleted } from "@/lib/leads-tombstones";
 
 export type LeadStatus =
   | "reuniao_agendada"
@@ -173,6 +172,10 @@ export type Lead = {
   comissao_percentual?: number;
   /** Data de assinatura do contrato/minuta — base da comissão realizada. */
   contrato_assinado_em?: string;
+  /** ISO — quando o lead foi excluído (soft-delete). null/undefined = ativo. */
+  excluido_em?: string | null;
+  /** Motivo informado ao excluir (livre, digitado pelo operador). */
+  excluido_motivo?: string | null;
   updated_at: string;
 };
 
@@ -357,9 +360,22 @@ export function normalizeNomeEmpresa(v: string): string {
     .trim();
 }
 
-export function listLeads(): Lead[] {
+/** Leitura crua do storage — inclui leads excluídos (soft-delete). Uso interno. */
+function readAll(): Lead[] {
   if (typeof window === "undefined") return [];
   return safeParse(window.localStorage.getItem(key()));
+}
+
+/** Leads ativos (não excluídos). É o que a UI e o resto do app devem usar. */
+export function listLeads(): Lead[] {
+  return readAll().filter((l) => !l.excluido_em);
+}
+
+/** Leads excluídos (soft-delete) — aba "Excluídas", com histórico preservado. */
+export function listLeadsExcluidos(): Lead[] {
+  return readAll()
+    .filter((l) => !!l.excluido_em)
+    .sort((a, b) => +new Date(b.excluido_em!) - +new Date(a.excluido_em!));
 }
 
 function persist(list: Lead[]) {
@@ -372,15 +388,21 @@ function persist(list: Lead[]) {
   window.dispatchEvent(new CustomEvent(LEADS_EVENT));
 }
 
+/**
+ * Localiza um lead por CNPJ/nome. Ignora leads excluídos (soft-delete) de
+ * propósito: sincronizações automáticas (agenda, RD Station etc.) nunca
+ * devem ressuscitar um lead excluído sozinhas — só `restoreLead` faz isso,
+ * por ação explícita do operador.
+ */
 function findIndex(list: Lead[], cnpj: string, empresa: string): number {
   const digits = normalizeCnpj(cnpj);
   if (digits.length >= 8) {
-    const i = list.findIndex((l) => normalizeCnpj(l.cnpj) === digits);
+    const i = list.findIndex((l) => !l.excluido_em && normalizeCnpj(l.cnpj) === digits);
     if (i >= 0) return i;
   }
   const nome = normalizeNomeEmpresa(empresa ?? "");
   if (!nome) return -1;
-  return list.findIndex((l) => normalizeNomeEmpresa(l.empresa) === nome);
+  return list.findIndex((l) => !l.excluido_em && normalizeNomeEmpresa(l.empresa) === nome);
 }
 
 /** Busca um lead já existente por CNPJ (>=8 dígitos) ou nome exato. */
@@ -393,23 +415,11 @@ export function findLead(empresa?: string | null, cnpj?: string | null): Lead | 
 export type UpsertLeadInput = Partial<Lead> & {
   empresa: string;
   cnpj?: string;
-  /** true = inclusão manual e explícita do usuário: sempre cria/atualiza e
-   * libera uma exclusão definitiva anterior. Sem isso, uma empresa excluída
-   * não é recriada sozinha (ex.: sincronização automática com o RD Station). */
-  force?: boolean;
 };
 
-export function upsertLead(input: UpsertLeadInput): Lead | null {
-  const list = listLeads();
+export function upsertLead(input: UpsertLeadInput): Lead {
+  const list = readAll();
   const idx = findIndex(list, input.cnpj ?? "", input.empresa);
-  if (idx < 0) {
-    if (input.force) {
-      unmarkLeadDeleted(input.empresa, input.cnpj);
-    } else if (isLeadDeleted(input.empresa, input.cnpj)) {
-      // Empresa excluída definitivamente pelo usuário — não recriar sozinho.
-      return null;
-    }
-  }
   const now = new Date().toISOString();
   const base: Lead =
     idx >= 0
@@ -427,10 +437,9 @@ export function upsertLead(input: UpsertLeadInput): Lead | null {
           ultima_observacao: "",
           updated_at: now,
         };
-  const { force: _force, ...inputData } = input;
   const merged: Lead = {
     ...base,
-    ...inputData,
+    ...input,
     empresa: input.empresa || base.empresa,
     cnpj: input.cnpj ?? base.cnpj,
     // ISOLAMENTO: entrou na Central de Reuniões => sai de TODA fila fria.
@@ -489,7 +498,7 @@ export function addMarco(
     categoria?: MarcoEvent["categoria"];
   },
 ): Lead | null {
-  const list = listLeads();
+  const list = readAll();
   const idx = list.findIndex((l) => l.id === id);
   if (idx < 0) return null;
   const prev = list[idx];
@@ -510,7 +519,7 @@ export function addMarco(
 
 
 export function updateLead(id: string, patch: Partial<Lead>): Lead | null {
-  const list = listLeads();
+  const list = readAll();
   const idx = list.findIndex((l) => l.id === id);
   if (idx < 0) return null;
   const prev = list[idx];
@@ -567,14 +576,81 @@ export function updateLead(id: string, patch: Partial<Lead>): Lead | null {
   return updated;
 }
 
-export function deleteLead(id: string): void {
-  const list = listLeads();
-  const alvo = list.find((l) => l.id === id);
-  // Registra a exclusão definitivamente ANTES de remover: sem isso a
-  // sincronização automática com o RD Station recria a empresa sozinha no
-  // próximo carregamento (ver leads-tombstones.ts).
-  if (alvo) markLeadDeleted(alvo.empresa, alvo.cnpj);
-  persist(list.filter((l) => l.id !== id));
+/**
+ * Exclusão (soft-delete): o lead some da esteira/telas normais, mas continua
+ * salvo — com todo o histórico — na aba "Excluídas". Nunca apaga de fato os
+ * dados; quem quiser apagar de verdade os registros de teste tem o botão de
+ * limpeza do simulador (que usa outro caminho).
+ */
+export function deleteLead(id: string, motivo?: string): Lead | null {
+  const list = readAll();
+  const idx = list.findIndex((l) => l.id === id);
+  if (idx < 0) return null;
+  const prev = list[idx];
+  const now = new Date().toISOString();
+  const motivoLimpo = motivo?.trim() || undefined;
+  const updated: Lead = {
+    ...prev,
+    excluido_em: now,
+    excluido_motivo: motivoLimpo ?? null,
+    timeline: appendMarco(prev.timeline, {
+      status: prev.status,
+      titulo: "🗑️ Empresa excluída",
+      detalhe: motivoLimpo ? `Motivo: ${motivoLimpo}` : "Sem motivo informado.",
+    }),
+    updated_at: now,
+  };
+  list[idx] = updated;
+  persist(list);
+  return updated;
+}
+
+/**
+ * Apaga o registro de verdade (sem soft-delete, sem histórico). Uso restrito
+ * a limpeza de dados de teste (ex.: simulador E2E) — no restante do app,
+ * use `deleteLead`, que preserva o histórico e permite restaurar.
+ */
+export function hardDeleteLead(id: string): void {
+  const list = readAll().filter((l) => l.id !== id);
+  persist(list);
+}
+
+/**
+ * Traz de volta um lead excluído, com todo o histórico intacto. Grava na
+ * timeline a data/motivo da exclusão original e a data da restauração —
+ * nada é reescrito ou apagado, só um novo marco é anexado.
+ */
+export function restoreLead(id: string, obs?: string): Lead | null {
+  const list = readAll();
+  const idx = list.findIndex((l) => l.id === id);
+  if (idx < 0) return null;
+  const prev = list[idx];
+  if (!prev.excluido_em) return prev; // já estava ativo
+  const now = new Date().toISOString();
+  const dataExclusaoFmt = new Date(prev.excluido_em).toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+  const updated: Lead = {
+    ...prev,
+    excluido_em: null,
+    excluido_motivo: null,
+    timeline: appendMarco(prev.timeline, {
+      status: prev.status,
+      titulo: "♻️ Empresa restaurada",
+      detalhe: [
+        `Excluída em ${dataExclusaoFmt}${prev.excluido_motivo ? ` (motivo: ${prev.excluido_motivo})` : " (sem motivo informado)"}.`,
+        `Restaurada em ${new Date(now).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}.`,
+        obs?.trim(),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    }),
+    updated_at: now,
+  };
+  list[idx] = updated;
+  persist(list);
+  return updated;
 }
 
 /** Leads que ocupam a Central de Reuniões (todos, exceto perdidos que voltam à nutrição). */
