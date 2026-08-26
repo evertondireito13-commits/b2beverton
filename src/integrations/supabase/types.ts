@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.15"
   }
   public: {
     Tables: {
@@ -430,54 +430,6 @@ export type Database = {
         }
         Relationships: []
       }
-      leads_central: {
-        Row: {
-          cnpj: string
-          consultor: string
-          contato_cargo: string | null
-          contato_nome: string | null
-          created_at: string
-          data_agendamento: string | null
-          em_followup_frio: boolean
-          id: string
-          razao_social: string
-          rd_deal_id: string | null
-          status: Database["public"]["Enums"]["lead_central_status"]
-          ultima_observacao: string | null
-          updated_at: string
-        }
-        Insert: {
-          cnpj: string
-          consultor?: string
-          contato_cargo?: string | null
-          contato_nome?: string | null
-          created_at?: string
-          data_agendamento?: string | null
-          em_followup_frio?: boolean
-          id?: string
-          razao_social: string
-          rd_deal_id?: string | null
-          status?: Database["public"]["Enums"]["lead_central_status"]
-          ultima_observacao?: string | null
-          updated_at?: string
-        }
-        Update: {
-          cnpj?: string
-          consultor?: string
-          contato_cargo?: string | null
-          contato_nome?: string | null
-          created_at?: string
-          data_agendamento?: string | null
-          em_followup_frio?: boolean
-          id?: string
-          razao_social?: string
-          rd_deal_id?: string | null
-          status?: Database["public"]["Enums"]["lead_central_status"]
-          ultima_observacao?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
       user_prompts: {
         Row: {
           consultor: string
@@ -519,13 +471,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      lead_central_status:
-        | "reuniao_agendada"
-        | "pos_reuniao"
-        | "levantamento_docs"
-        | "apresentacao_calculos"
-        | "fechado"
-        | "perdido"
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -652,15 +598,6 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {
-      lead_central_status: [
-        "reuniao_agendada",
-        "pos_reuniao",
-        "levantamento_docs",
-        "apresentacao_calculos",
-        "fechado",
-        "perdido",
-      ],
-    },
+    Enums: {},
   },
 } as const
