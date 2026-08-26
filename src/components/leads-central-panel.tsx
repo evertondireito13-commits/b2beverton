@@ -402,10 +402,10 @@ export function LeadsCentralPanel() {
         <Tabs value={aba} onValueChange={(v) => setAba(v as typeof aba)}>
           <TabsList>
             <TabsTrigger value="esteira">
-              Esteira ativa ({visiveis.length - arquivados.length})
+              Esteira ativa ({ativosUnicos.length})
             </TabsTrigger>
             <TabsTrigger value="reativacao">Reativação futura ({arquivados.length})</TabsTrigger>
-            <TabsTrigger value="excluidas">Excluídas ({excluidos.length})</TabsTrigger>
+            <TabsTrigger value="excluidas">Excluídas ({excluidosVisiveis.length})</TabsTrigger>
           </TabsList>
         </Tabs>
         <Input
@@ -457,7 +457,7 @@ export function LeadsCentralPanel() {
                   : "border-border bg-card text-navy-deep hover:bg-accent"
               }`}
             >
-              Todas ({visiveis.length - arquivados.length})
+              Todas ({ativosUnicos.length})
             </button>
             {FUNNEL_STAGES.map((s) => {
               const n = (porFase.get(s) ?? []).length;
@@ -625,13 +625,13 @@ export function LeadsCentralPanel() {
       ) : (
 
         <ul className="space-y-2">
-          {excluidos.length === 0 && (
+          {excluidosVisiveis.length === 0 && (
             <li className="rounded-xl border border-dashed border-border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
               Nenhuma empresa excluída. Ao excluir um lead, ele vem para cá com todo o histórico
               preservado — dá pra restaurar quando quiser.
             </li>
           )}
-          {excluidos.map((lead) => (
+          {excluidosVisiveis.map((lead) => (
             <li key={lead.id}>
               <button
                 type="button"
