@@ -220,28 +220,92 @@ export function LeadsCentralPanel() {
   }, [leads]);
 
 
-  const arquivados = useMemo(
-    () =>
-      visiveis
-        .filter((l) => l.status === "perdido" || l.status === "nao_qualificado")
-        .sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at)),
+  // Chave única por empresa: CNPJ (só dígitos) quando existe, senão o nome
+  // normalizado. Usada para garantir que a MESMA empresa nunca apareça em mais
+  // de uma aba (esteira ativa > reativação futura > excluídas).
+  const leadKey = useCallback((l: Lead) => {
+    const cnpj = (l.cnpj ?? "").replace(/\D/g, "");
+    if (cnpj.length >= 11) return `cnpj:${cnpj}`;
+    return `nome:${(l.empresa ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()}`;
+  }, []);
+
+  const ativos = useMemo(
+    () => visiveis.filter((l) => l.status !== "perdido" && l.status !== "nao_qualificado"),
     [visiveis],
   );
+  const chavesAtivas = useMemo(
+    () => new Set(ativos.map(leadKey)),
+    [ativos, leadKey],
+  );
+
+  const arquivados = useMemo(() => {
+    const vistos = new Set<string>();
+    return visiveis
+      .filter((l) => l.status === "perdido" || l.status === "nao_qualificado")
+      .sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at))
+      .filter((l) => {
+        const k = leadKey(l);
+        // empresa que já está na esteira ativa não é "reativação futura"
+        if (chavesAtivas.has(k)) return false;
+        if (vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+  }, [visiveis, chavesAtivas, leadKey]);
+
+  const chavesArquivadas = useMemo(
+    () => new Set(arquivados.map(leadKey)),
+    [arquivados, leadKey],
+  );
+
+  const excluidosVisiveis = useMemo(() => {
+    const vistos = new Set<string>();
+    return excluidos
+      .slice()
+      .sort((a, b) => +new Date(b.excluido_em ?? 0) - +new Date(a.excluido_em ?? 0))
+      .filter((l) => {
+        const k = leadKey(l);
+        // se a empresa voltou (ativa ou em reativação), some da lixeira
+        if (chavesAtivas.has(k) || chavesArquivadas.has(k)) return false;
+        if (vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+  }, [excluidos, chavesAtivas, chavesArquivadas, leadKey]);
 
   const porFase = useMemo(() => {
     const map = new Map<LeadStatus, Lead[]>();
     for (const s of FUNNEL_STAGES) map.set(s, []);
-    for (const l of visiveis) {
-      if (l.status === "perdido" || l.status === "nao_qualificado") continue;
+    const vistos = new Set<string>();
+    for (const l of ativos) {
+      const k = leadKey(l);
+      if (vistos.has(k)) continue;
+      vistos.add(k);
       map.get(effectiveStage(l))?.push(l);
     }
     for (const [, list] of map)
       list.sort((a, b) => +new Date(a.data_reuniao) - +new Date(b.data_reuniao));
     return map;
-  }, [visiveis]);
+  }, [ativos, leadKey]);
+
+  const ativosUnicos = useMemo(() => {
+    const vistos = new Set<string>();
+    return ativos.filter((l) => {
+      const k = leadKey(l);
+      if (vistos.has(k)) return false;
+      vistos.add(k);
+      return true;
+    });
+  }, [ativos, leadKey]);
 
   const selected =
     leads.find((l) => l.id === selectedId) ?? excluidos.find((l) => l.id === selectedId) ?? null;
+
 
   /**
    * Atualização otimista: a fase muda na tela na hora; se a sincronização com o
