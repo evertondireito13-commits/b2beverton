@@ -85,6 +85,226 @@ export type Database = {
         }
         Relationships: []
       }
+      atualizacoes: {
+        Row: {
+          acao_esperada: string | null
+          arquivado: boolean
+          categoria: string
+          consultor: string
+          created_at: string
+          fonte: string | null
+          id: string
+          impacto: string | null
+          o_que_mudou: string
+          pontuacao: Json
+          prazo: string | null
+          prioridade: string
+          quem_age: string | null
+          titulo: string
+          updated_at: string
+          versao: string
+        }
+        Insert: {
+          acao_esperada?: string | null
+          arquivado?: boolean
+          categoria?: string
+          consultor: string
+          created_at?: string
+          fonte?: string | null
+          id?: string
+          impacto?: string | null
+          o_que_mudou?: string
+          pontuacao?: Json
+          prazo?: string | null
+          prioridade?: string
+          quem_age?: string | null
+          titulo: string
+          updated_at?: string
+          versao?: string
+        }
+        Update: {
+          acao_esperada?: string | null
+          arquivado?: boolean
+          categoria?: string
+          consultor?: string
+          created_at?: string
+          fonte?: string | null
+          id?: string
+          impacto?: string | null
+          o_que_mudou?: string
+          pontuacao?: Json
+          prazo?: string | null
+          prioridade?: string
+          quem_age?: string | null
+          titulo?: string
+          updated_at?: string
+          versao?: string
+        }
+        Relationships: []
+      }
+      atualizacoes_leituras: {
+        Row: {
+          atualizacao_id: string
+          consultor: string
+          created_at: string
+          id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          atualizacao_id: string
+          consultor: string
+          created_at?: string
+          id?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          atualizacao_id?: string
+          consultor?: string
+          created_at?: string
+          id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "atualizacoes_leituras_atualizacao_id_fkey"
+            columns: ["atualizacao_id"]
+            isOneToOne: false
+            referencedRelation: "atualizacoes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      biblioteca_buscas_vazias: {
+        Row: {
+          consultor: string
+          created_at: string
+          id: string
+          termo: string
+        }
+        Insert: {
+          consultor: string
+          created_at?: string
+          id?: string
+          termo: string
+        }
+        Update: {
+          consultor?: string
+          created_at?: string
+          id?: string
+          termo?: string
+        }
+        Relationships: []
+      }
+      biblioteca_conteudos: {
+        Row: {
+          aprovado_por: string | null
+          arquivado: boolean
+          cargo: string | null
+          consultor: string
+          corpo: string
+          created_at: string
+          etapa: string | null
+          id: string
+          impacto_prospeccao: string | null
+          ncm: string | null
+          pergunta_avanco: string | null
+          quando_nao_usar: string | null
+          resposta_recomendada: string | null
+          segmento: string | null
+          tags: string[]
+          tipo: string
+          titulo: string
+          updated_at: string
+          usos: number
+          versao: number
+          vigencia_em: string | null
+        }
+        Insert: {
+          aprovado_por?: string | null
+          arquivado?: boolean
+          cargo?: string | null
+          consultor: string
+          corpo?: string
+          created_at?: string
+          etapa?: string | null
+          id?: string
+          impacto_prospeccao?: string | null
+          ncm?: string | null
+          pergunta_avanco?: string | null
+          quando_nao_usar?: string | null
+          resposta_recomendada?: string | null
+          segmento?: string | null
+          tags?: string[]
+          tipo?: string
+          titulo: string
+          updated_at?: string
+          usos?: number
+          versao?: number
+          vigencia_em?: string | null
+        }
+        Update: {
+          aprovado_por?: string | null
+          arquivado?: boolean
+          cargo?: string | null
+          consultor?: string
+          corpo?: string
+          created_at?: string
+          etapa?: string | null
+          id?: string
+          impacto_prospeccao?: string | null
+          ncm?: string | null
+          pergunta_avanco?: string | null
+          quando_nao_usar?: string | null
+          resposta_recomendada?: string | null
+          segmento?: string | null
+          tags?: string[]
+          tipo?: string
+          titulo?: string
+          updated_at?: string
+          usos?: number
+          versao?: number
+          vigencia_em?: string | null
+        }
+        Relationships: []
+      }
+      biblioteca_versoes: {
+        Row: {
+          autor: string | null
+          conteudo_id: string
+          created_at: string
+          id: string
+          snapshot: Json
+          versao: number
+        }
+        Insert: {
+          autor?: string | null
+          conteudo_id: string
+          created_at?: string
+          id?: string
+          snapshot: Json
+          versao: number
+        }
+        Update: {
+          autor?: string | null
+          conteudo_id?: string
+          created_at?: string
+          id?: string
+          snapshot?: Json
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "biblioteca_versoes_conteudo_id_fkey"
+            columns: ["conteudo_id"]
+            isOneToOne: false
+            referencedRelation: "biblioteca_conteudos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       call_logs: {
         Row: {
           called_at: string
@@ -427,6 +647,81 @@ export type Database = {
           ultima_observacao?: string | null
           updated_at?: string
           valor_credito?: number | null
+        }
+        Relationships: []
+      }
+      passagens_bastao: {
+        Row: {
+          canal: string | null
+          cargo: string | null
+          cnpj: string | null
+          consultor: string
+          contato: string | null
+          contexto_fiscal: string | null
+          created_at: string
+          dor: string | null
+          empresa: string
+          id: string
+          motivo_devolucao: string | null
+          nivel_interesse: string | null
+          objecao: string | null
+          pendencias: string | null
+          prazo: string | null
+          proxima_acao: string
+          resolvido_em: string | null
+          responsavel: string
+          resumo: string
+          segmento: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          canal?: string | null
+          cargo?: string | null
+          cnpj?: string | null
+          consultor: string
+          contato?: string | null
+          contexto_fiscal?: string | null
+          created_at?: string
+          dor?: string | null
+          empresa: string
+          id?: string
+          motivo_devolucao?: string | null
+          nivel_interesse?: string | null
+          objecao?: string | null
+          pendencias?: string | null
+          prazo?: string | null
+          proxima_acao?: string
+          resolvido_em?: string | null
+          responsavel?: string
+          resumo?: string
+          segmento?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          canal?: string | null
+          cargo?: string | null
+          cnpj?: string | null
+          consultor?: string
+          contato?: string | null
+          contexto_fiscal?: string | null
+          created_at?: string
+          dor?: string | null
+          empresa?: string
+          id?: string
+          motivo_devolucao?: string | null
+          nivel_interesse?: string | null
+          objecao?: string | null
+          pendencias?: string | null
+          prazo?: string | null
+          proxima_acao?: string
+          resolvido_em?: string | null
+          responsavel?: string
+          resumo?: string
+          segmento?: string | null
+          status?: string
+          updated_at?: string
         }
         Relationships: []
       }
