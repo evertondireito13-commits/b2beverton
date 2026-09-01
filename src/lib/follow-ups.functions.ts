@@ -527,7 +527,13 @@ REGRAS:
 - A data agendada JAMAIS pode ser anterior a HOJE. Se o texto citar um mês/dia que já passou neste ano, entenda que se refere ao PRÓXIMO mês/ano correspondente (o contato está falando do futuro, não do passado).
 - Se o contato citou uma data EXPLÍCITA — "dia 3 de agosto", "03/08", "primeira semana de agosto", "amanhã 10h", "sexta 15h", "retorno das férias em 05/08" — respeite-a e converta corretamente considerando o mês atual (${nomeMesAtual}/${spYear}). Exemplos com HOJE=${spTodayISO}: "3 de agosto" → ${spYear}-08-03; "dia 15" (sem mês, e 15 ainda não passou neste mês) → ${spYear}-${spMonth}-15; "dia 15" (sem mês, mas 15 já passou) → mês seguinte, dia 15.
 - REGRA PADRÃO (só se o contato NÃO deu data específica): agende para +2 DIAS ÚTEIS a partir de AGORA (${tzNow}), mantendo o MESMO HORÁRIO da ligação atual. Sábado/domingo pulam para segunda. Se disse só "semana que vem" sem dia, use segunda-feira no mesmo horário da ligação.
-- "notes": resumo curto (máx 2 frases) em português. Inclua o nome de quem atendeu e a pessoa a procurar (fiscal, decisor). Se o contato citou e-mail para envio, mencione-o. Se o retorno é longo (férias, viagem, agenda cheia), mencione o motivo.
+- "notes": resumo curto (máx 2 frases) em português. Inclua o nome de quem atendeu e a pessoa a procurar (fiscal, decisor). Se o contato citou e-mail para envio, mencione-o como PENDENTE ("e-mail a enviar para X"). Se o retorno é longo (férias, viagem, agenda cheia), mencione o motivo.
+
+🚫 ANTI-INVENÇÃO (CRÍTICO — vale para "notes" e todos os campos):
+- Descreva SOMENTE o que está literalmente na transcrição/histórico. NUNCA afirme que algo já foi feito se isso não aparece no texto: proibido escrever "e-mail enviado", "material encaminhado", "proposta enviada", "reunião confirmada" quando o texto só mostra que um e-mail foi INFORMADO/pedido.
+- Ação ainda não executada deve aparecer como pendência futura ("enviar e-mail para ...", "retornar ligação para falar com ...").
+- Não deduza cargos, intenções, interesse ou combinados que não foram ditos. Na dúvida, omita.
+- "BHM Advogados" (ou variações como "BHN") é a NOSSA empresa, do consultor. NUNCA descreva o contato, a Daniele, o decisor ou qualquer pessoa da empresa prospectada como sendo da BHM, nem trate a BHM como cliente/prospect.
 - "contactPerson": nome LIMPO da pessoa a procurar/que atendeu, sem parênteses/qualificadores tipo "(deduzido)", "(recepcionista)". Se só a recepcionista atendeu e não disse o nome do decisor, use o nome dela mesmo. Formato "Nome" ou "Nome (Cargo curto)" — sem frases longas.
 - "companyName" e "cnpj": se o texto não trouxer, use os fallbacks fornecidos.`;
 
