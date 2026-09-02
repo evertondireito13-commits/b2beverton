@@ -1184,7 +1184,92 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </button>
         </div>
 
-        {empresasOrdenadas.length > 0 && (
+        {/* Barra de filtros — estilo Balcão de Negócios */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-navy-deep/15 bg-card px-3 py-2 shadow-card">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={filtroBusca}
+              onChange={(ev) => setFiltroBusca(ev.target.value)}
+              placeholder="Razão social ou CNPJ…"
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <select
+            value={filtroStatus}
+            onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por status"
+          >
+            <option value="">Todas</option>
+            <option value="pending">Pendentes</option>
+            <option value="realizada">Realizadas</option>
+            <option value="sem_interesse">Sem interesse</option>
+          </select>
+          <select
+            value={filtroUf}
+            onChange={(ev) => setFiltroUf(ev.target.value)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por UF"
+          >
+            <option value="">Todas UF</option>
+            {ufsDisponiveis.map((uf) => (
+              <option key={uf} value={uf}>{uf}</option>
+            ))}
+          </select>
+          <select
+            value={filtroSetor}
+            onChange={(ev) => setFiltroSetor(ev.target.value)}
+            className="h-8 max-w-[180px] rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por setor"
+          >
+            <option value="">Todos os setores</option>
+            {setoresDisponiveis.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            value={filtroRegime}
+            onChange={(ev) => setFiltroRegime(ev.target.value)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por regime tributário"
+          >
+            <option value="">Todos os regimes</option>
+            {REGIMES.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+            <option value="nao_informado">Não informado</option>
+          </select>
+          {filtrosAtivos && (
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="text-[11px] font-medium text-muted-foreground underline hover:text-navy-deep"
+            >
+              Limpar filtros
+            </button>
+          )}
+          <span className="rounded-md bg-navy-deep/10 px-2 py-1 text-[11px] font-semibold text-navy-deep">
+            {empresasFiltradas.length} empresa(s)
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={enriquecendo}
+            onClick={() => void enriquecerCnpjs()}
+            className="h-8 gap-1 text-[11px] font-semibold"
+            title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+          >
+            {enriquecendo ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+          </Button>
+        </div>
+
+        {empresasFiltradas.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-deep/15 bg-muted/30 px-3 py-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-navy-deep">
               <input
