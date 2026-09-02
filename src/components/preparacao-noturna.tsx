@@ -434,7 +434,15 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
     null,
   );
+  const [filtroBusca, setFiltroBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
+  const [filtroUf, setFiltroUf] = useState("");
+  const [filtroSetor, setFiltroSetor] = useState("");
+  const [filtroRegime, setFiltroRegime] = useState("");
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const [progressoEnriquecimento, setProgressoEnriquecimento] = useState<string | null>(null);
   const runGenerate = useServerFn(generateWithAI);
+  const runConsultarCnpj = useServerFn(consultarCnpj);
   const navigate = useNavigate();
 
   const pastaAtual = useMemo(
