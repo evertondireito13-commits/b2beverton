@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { useServerFn } from "@tanstack/react-start";
 import { generateWithAI } from "@/lib/prospeccao.functions";
+import { consultarCnpj } from "@/lib/cnpj-enriquecimento.functions";
 import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
 import { getSessionConsultor, getConsultor } from "@/lib/historico-store";
 import {
@@ -63,7 +64,18 @@ type Empresa = {
   telefone?: string;
   email?: string;
   observacoes?: string;
+  uf?: string;
+  setor?: string;
+  regime?: string;
 };
+
+const UFS_BR = [
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
+  "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+];
+
+const REGIMES = ["Simples Nacional", "Lucro Presumido", "Lucro Real", "MEI"];
+
 
 
 function todayISO(): string {
@@ -422,7 +434,15 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
     null,
   );
+  const [filtroBusca, setFiltroBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
+  const [filtroUf, setFiltroUf] = useState("");
+  const [filtroSetor, setFiltroSetor] = useState("");
+  const [filtroRegime, setFiltroRegime] = useState("");
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const [progressoEnriquecimento, setProgressoEnriquecimento] = useState<string | null>(null);
   const runGenerate = useServerFn(generateWithAI);
+  const runConsultarCnpj = useServerFn(consultarCnpj);
   const navigate = useNavigate();
 
   const pastaAtual = useMemo(
@@ -757,12 +777,96 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const semInteresse = useMemo(() => list.filter((e) => e.status === "sem_interesse"), [list]);
   const empresasOrdenadas = aba === "sem_interesse" ? semInteresse : ativas;
 
+  const ufsDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.uf).filter((u): u is string => !!u))].sort(),
+    [list],
+  );
+  const setoresDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
+    [list],
+  );
+  const filtrosAtivos = !!(filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime);
+
+  const empresasFiltradas = useMemo(() => {
+    const q = filtroBusca.trim().toLowerCase();
+    const qDig = filtroBusca.replace(/\D/g, "");
+    return empresasOrdenadas.filter((e) => {
+      if (filtroStatus && (e.status ?? "pending") !== filtroStatus) return false;
+      if (filtroUf && (e.uf ?? "") !== filtroUf) return false;
+      if (filtroSetor && (e.setor ?? "") !== filtroSetor) return false;
+      if (filtroRegime === "nao_informado") {
+        if (e.regime) return false;
+      } else if (filtroRegime && (e.regime ?? "") !== filtroRegime) return false;
+      if (q) {
+        const nome = `${e.razaoSocial ?? ""} ${e.nome ?? ""}`.toLowerCase();
+        const cnpjDig = (e.cnpj ?? "").replace(/\D/g, "");
+        if (!nome.includes(q) && !(qDig.length >= 2 && cnpjDig.includes(qDig))) return false;
+      }
+      return true;
+    });
+  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime]);
+
+  function limparFiltros() {
+    setFiltroBusca("");
+    setFiltroStatus("");
+    setFiltroUf("");
+    setFiltroSetor("");
+    setFiltroRegime("");
+  }
+
+  /** Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI. */
+  async function enriquecerCnpjs() {
+    const alvos = list.filter(
+      (e) => cnpjDigitos(e.cnpj).length === 14 && (!e.uf || !e.setor || !e.regime),
+    );
+    if (alvos.length === 0) {
+      toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
+      return;
+    }
+    setEnriquecendo(true);
+    let atual = [...list];
+    let ok = 0;
+    let falhas = 0;
+    for (let i = 0; i < alvos.length; i++) {
+      const alvo = alvos[i];
+      setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
+      try {
+        const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
+        if (r.ok) {
+          ok += 1;
+          atual = atual.map((e) =>
+            e.id === alvo.id
+              ? {
+                  ...e,
+                  uf: e.uf || r.uf || undefined,
+                  setor: e.setor || r.setor || undefined,
+                  regime: e.regime || r.regime || undefined,
+                }
+              : e,
+          );
+        } else {
+          falhas += 1;
+        }
+      } catch {
+        falhas += 1;
+      }
+    }
+    persist(atual);
+    setProgressoEnriquecimento(null);
+    setEnriquecendo(false);
+    toast.success(
+      `Enriquecimento concluído: ${ok} empresa(s) atualizada(s)` +
+        (falhas > 0 ? ` · ${falhas} sem dados (CNPJ inválido ou não encontrado)` : "") +
+        ". Campos preenchidos manualmente foram preservados.",
+    );
+  }
+
   /** Reordena manualmente e persiste a nova ordem da lista do dia. */
   function onReorder(ev: DragEndEvent) {
     const activeId = String(ev.active.id);
     const overId = ev.over ? String(ev.over.id) : null;
     if (!overId || activeId === overId) return;
-    const ids = empresasOrdenadas.map((e) => e.id);
+    const ids = empresasFiltradas.map((e) => e.id);
     const from = ids.indexOf(activeId);
     const to = ids.indexOf(overId);
     if (from < 0 || to < 0) return;
@@ -1080,17 +1184,102 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </button>
         </div>
 
-        {empresasOrdenadas.length > 0 && (
+        {/* Barra de filtros — estilo Balcão de Negócios */}
+        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-navy-deep/15 bg-card px-3 py-2 shadow-card">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={filtroBusca}
+              onChange={(ev) => setFiltroBusca(ev.target.value)}
+              placeholder="Razão social ou CNPJ…"
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <select
+            value={filtroStatus}
+            onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por status"
+          >
+            <option value="">Todas</option>
+            <option value="pending">Pendentes</option>
+            <option value="realizada">Realizadas</option>
+            <option value="sem_interesse">Sem interesse</option>
+          </select>
+          <select
+            value={filtroUf}
+            onChange={(ev) => setFiltroUf(ev.target.value)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por UF"
+          >
+            <option value="">Todas UF</option>
+            {ufsDisponiveis.map((uf) => (
+              <option key={uf} value={uf}>{uf}</option>
+            ))}
+          </select>
+          <select
+            value={filtroSetor}
+            onChange={(ev) => setFiltroSetor(ev.target.value)}
+            className="h-8 max-w-[180px] rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por setor"
+          >
+            <option value="">Todos os setores</option>
+            {setoresDisponiveis.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            value={filtroRegime}
+            onChange={(ev) => setFiltroRegime(ev.target.value)}
+            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+            title="Filtrar por regime tributário"
+          >
+            <option value="">Todos os regimes</option>
+            {REGIMES.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+            <option value="nao_informado">Não informado</option>
+          </select>
+          {filtrosAtivos && (
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="text-[11px] font-medium text-muted-foreground underline hover:text-navy-deep"
+            >
+              Limpar filtros
+            </button>
+          )}
+          <span className="rounded-md bg-navy-deep/10 px-2 py-1 text-[11px] font-semibold text-navy-deep">
+            {empresasFiltradas.length} empresa(s)
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={enriquecendo}
+            onClick={() => void enriquecerCnpjs()}
+            className="h-8 gap-1 text-[11px] font-semibold"
+            title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+          >
+            {enriquecendo ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+          </Button>
+        </div>
+
+        {empresasFiltradas.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-deep/15 bg-muted/30 px-3 py-2">
             <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-navy-deep">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[var(--color-navy-deep,#1e293b)]"
                 checked={
-                  selecionados.length > 0 && selecionados.length === empresasOrdenadas.length
+                  selecionados.length > 0 && selecionados.length === empresasFiltradas.length
                 }
                 onChange={(ev) =>
-                  setSelecionados(ev.target.checked ? empresasOrdenadas.map((x) => x.id) : [])
+                  setSelecionados(ev.target.checked ? empresasFiltradas.map((x) => x.id) : [])
                 }
               />
               Selecionar todas
@@ -1099,7 +1288,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               type="button"
               onClick={() =>
                 setSelecionados(
-                  empresasOrdenadas.filter((x) => x.status !== "realizada").map((x) => x.id),
+                  empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
                 )
               }
               className="rounded-md border border-border/60 bg-white px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:text-navy-deep"
@@ -1176,11 +1365,19 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
           </div>
 
-        ) : (
+        ) : empresasFiltradas.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
+            Nenhuma empresa corresponde aos filtros.{" "}
+            <button type="button" onClick={limparFiltros} className="font-medium text-primary underline">
+              Limpar filtros
+            </button>
+          </div>
+        ) : null}
+        {empresasFiltradas.length > 0 && (
           <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
-          <SortableContext items={empresasOrdenadas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
           <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-white shadow-card">
-            {empresasOrdenadas.map((e) => {
+            {empresasFiltradas.map((e) => {
               const recusado = e.status === "sem_interesse";
               const done = e.status === "realizada";
               const unidades = unidadesDoGrupo(e);
