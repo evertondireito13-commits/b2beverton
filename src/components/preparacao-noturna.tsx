@@ -1373,16 +1373,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             </button>
           </div>
         ) : null}
-        {false && empresasOrdenadas.length === -1 ? (
-          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-16 text-center text-sm text-muted-foreground">
-            {aba === "sem_interesse"
-              ? "Nenhuma empresa marcada como sem interesse aqui."
-              : pastaAtual
-                ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
-                : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
-          </div>
-
-        ) : (
+        {empresasFiltradas.length > 0 && (
           <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
           <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
           <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-white shadow-card">
