@@ -1276,10 +1276,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 type="checkbox"
                 className="h-3.5 w-3.5 accent-[var(--color-navy-deep,#1e293b)]"
                 checked={
-                  selecionados.length > 0 && selecionados.length === empresasOrdenadas.length
+                  selecionados.length > 0 && selecionados.length === empresasFiltradas.length
                 }
                 onChange={(ev) =>
-                  setSelecionados(ev.target.checked ? empresasOrdenadas.map((x) => x.id) : [])
+                  setSelecionados(ev.target.checked ? empresasFiltradas.map((x) => x.id) : [])
                 }
               />
               Selecionar todas
@@ -1288,7 +1288,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               type="button"
               onClick={() =>
                 setSelecionados(
-                  empresasOrdenadas.filter((x) => x.status !== "realizada").map((x) => x.id),
+                  empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
                 )
               }
               className="rounded-md border border-border/60 bg-white px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:text-navy-deep"
@@ -1365,11 +1365,28 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
           </div>
 
+        ) : empresasFiltradas.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
+            Nenhuma empresa corresponde aos filtros.{" "}
+            <button type="button" onClick={limparFiltros} className="font-medium text-primary underline">
+              Limpar filtros
+            </button>
+          </div>
+        ) : null}
+        {false && empresasOrdenadas.length === -1 ? (
+          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-16 text-center text-sm text-muted-foreground">
+            {aba === "sem_interesse"
+              ? "Nenhuma empresa marcada como sem interesse aqui."
+              : pastaAtual
+                ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
+                : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
+          </div>
+
         ) : (
           <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
-          <SortableContext items={empresasOrdenadas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
           <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-white shadow-card">
-            {empresasOrdenadas.map((e) => {
+            {empresasFiltradas.map((e) => {
               const recusado = e.status === "sem_interesse";
               const done = e.status === "realizada";
               const unidades = unidadesDoGrupo(e);
