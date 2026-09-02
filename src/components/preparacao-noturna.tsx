@@ -777,12 +777,96 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const semInteresse = useMemo(() => list.filter((e) => e.status === "sem_interesse"), [list]);
   const empresasOrdenadas = aba === "sem_interesse" ? semInteresse : ativas;
 
+  const ufsDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.uf).filter((u): u is string => !!u))].sort(),
+    [list],
+  );
+  const setoresDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
+    [list],
+  );
+  const filtrosAtivos = !!(filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime);
+
+  const empresasFiltradas = useMemo(() => {
+    const q = filtroBusca.trim().toLowerCase();
+    const qDig = filtroBusca.replace(/\D/g, "");
+    return empresasOrdenadas.filter((e) => {
+      if (filtroStatus && (e.status ?? "pending") !== filtroStatus) return false;
+      if (filtroUf && (e.uf ?? "") !== filtroUf) return false;
+      if (filtroSetor && (e.setor ?? "") !== filtroSetor) return false;
+      if (filtroRegime === "nao_informado") {
+        if (e.regime) return false;
+      } else if (filtroRegime && (e.regime ?? "") !== filtroRegime) return false;
+      if (q) {
+        const nome = `${e.razaoSocial ?? ""} ${e.nome ?? ""}`.toLowerCase();
+        const cnpjDig = (e.cnpj ?? "").replace(/\D/g, "");
+        if (!nome.includes(q) && !(qDig.length >= 2 && cnpjDig.includes(qDig))) return false;
+      }
+      return true;
+    });
+  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime]);
+
+  function limparFiltros() {
+    setFiltroBusca("");
+    setFiltroStatus("");
+    setFiltroUf("");
+    setFiltroSetor("");
+    setFiltroRegime("");
+  }
+
+  /** Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI. */
+  async function enriquecerCnpjs() {
+    const alvos = list.filter(
+      (e) => cnpjDigitos(e.cnpj).length === 14 && (!e.uf || !e.setor || !e.regime),
+    );
+    if (alvos.length === 0) {
+      toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
+      return;
+    }
+    setEnriquecendo(true);
+    let atual = [...list];
+    let ok = 0;
+    let falhas = 0;
+    for (let i = 0; i < alvos.length; i++) {
+      const alvo = alvos[i];
+      setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
+      try {
+        const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
+        if (r.ok) {
+          ok += 1;
+          atual = atual.map((e) =>
+            e.id === alvo.id
+              ? {
+                  ...e,
+                  uf: e.uf || r.uf || undefined,
+                  setor: e.setor || r.setor || undefined,
+                  regime: e.regime || r.regime || undefined,
+                }
+              : e,
+          );
+        } else {
+          falhas += 1;
+        }
+      } catch {
+        falhas += 1;
+      }
+    }
+    persist(atual);
+    setProgressoEnriquecimento(null);
+    setEnriquecendo(false);
+    toast.success(
+      `Enriquecimento concluído: ${ok} empresa(s) atualizada(s)` +
+        (falhas > 0 ? ` · ${falhas} sem dados (CNPJ inválido ou não encontrado)` : "") +
+        ". Campos preenchidos manualmente foram preservados.",
+    );
+  }
+
   /** Reordena manualmente e persiste a nova ordem da lista do dia. */
   function onReorder(ev: DragEndEvent) {
     const activeId = String(ev.active.id);
     const overId = ev.over ? String(ev.over.id) : null;
     if (!overId || activeId === overId) return;
-    const ids = empresasOrdenadas.map((e) => e.id);
+    const ids = empresasFiltradas.map((e) => e.id);
     const from = ids.indexOf(activeId);
     const to = ids.indexOf(overId);
     if (from < 0 || to < 0) return;
