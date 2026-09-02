@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { useServerFn } from "@tanstack/react-start";
 import { generateWithAI } from "@/lib/prospeccao.functions";
+import { consultarCnpj } from "@/lib/cnpj-enriquecimento.functions";
 import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
 import { getSessionConsultor, getConsultor } from "@/lib/historico-store";
 import {
@@ -63,7 +64,18 @@ type Empresa = {
   telefone?: string;
   email?: string;
   observacoes?: string;
+  uf?: string;
+  setor?: string;
+  regime?: string;
 };
+
+const UFS_BR = [
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
+  "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+];
+
+const REGIMES = ["Simples Nacional", "Lucro Presumido", "Lucro Real", "MEI"];
+
 
 
 function todayISO(): string {
