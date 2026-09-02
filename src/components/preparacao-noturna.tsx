@@ -1436,6 +1436,22 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                       Ligado / Em andamento
                     </span>
                   ) : null}
+                  {e.uf && (
+                    <span
+                      className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600"
+                      title="UF"
+                    >
+                      {e.uf}
+                    </span>
+                  )}
+                  {e.setor && (
+                    <span
+                      className="hidden shrink-0 max-w-[140px] truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 sm:inline-block"
+                      title={e.setor}
+                    >
+                      {e.setor}
+                    </span>
+                  )}
                   {meta.length > 0 && (
                     <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground md:inline">
                       {meta.join(" · ")}
@@ -1673,6 +1689,9 @@ function EditEmpresaDialog({
   const [email, setEmail] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [textoBruto, setTextoBruto] = useState("");
+  const [uf, setUf] = useState("");
+  const [setor, setSetor] = useState("");
+  const [regime, setRegime] = useState("");
 
   useEffect(() => {
     if (!empresa) return;
@@ -1687,6 +1706,9 @@ function EditEmpresaDialog({
     setEmail(empresa.email || auto.email || "");
     setObservacoes(empresa.observacoes || auto.observacoes || "");
     setTextoBruto(empresa.textoBruto ?? "");
+    setUf(empresa.uf ?? "");
+    setSetor(empresa.setor ?? "");
+    setRegime(empresa.regime ?? "");
   }, [empresa]);
 
   const open = empresa !== null;
@@ -1705,6 +1727,9 @@ function EditEmpresaDialog({
       email: email.trim() || undefined,
       observacoes: observacoes.trim() || undefined,
       textoBruto,
+      uf: uf.trim() || undefined,
+      setor: setor.trim() || undefined,
+      regime: regime.trim() || undefined,
     };
   }
 
@@ -1741,6 +1766,35 @@ function EditEmpresaDialog({
             <Field label="Cargo" value={cargo} onChange={setCargo} />
           </div>
           <Field label="E-mail" value={email} onChange={setEmail} type="email" />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <Label className="text-[11px]">UF</Label>
+              <select
+                value={uf}
+                onChange={(ev) => setUf(ev.target.value)}
+                className="h-9 rounded-md border border-input bg-white px-2 text-[12px] text-navy-deep"
+              >
+                <option value="">—</option>
+                {UFS_BR.map((sigla) => (
+                  <option key={sigla} value={sigla}>{sigla}</option>
+                ))}
+              </select>
+            </div>
+            <Field label="Setor" value={setor} onChange={setSetor} />
+            <div className="grid gap-1.5">
+              <Label className="text-[11px]">Regime tributário</Label>
+              <select
+                value={regime}
+                onChange={(ev) => setRegime(ev.target.value)}
+                className="h-9 rounded-md border border-input bg-white px-2 text-[12px] text-navy-deep"
+              >
+                <option value="">—</option>
+                {REGIMES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="grid gap-1.5">
             <Label className="text-[11px]">Observações</Label>
             <Textarea
