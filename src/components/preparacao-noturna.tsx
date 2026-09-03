@@ -824,9 +824,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       return;
     }
     setEnriquecendo(true);
-    let atual = [...list];
+        let atual = [...list];
     let ok = 0;
     let falhas = 0;
+    const errosVistos: string[] = [];
     for (let i = 0; i < alvos.length; i++) {
       const alvo = alvos[i];
       setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
@@ -846,9 +847,14 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           );
         } else {
           falhas += 1;
+          console.error(`Enriquecimento falhou — ${alvo.nome} (${alvo.cnpj}):`, r.erro);
+          if (!errosVistos.includes(r.erro)) errosVistos.push(r.erro);
         }
-      } catch {
+      } catch (err) {
         falhas += 1;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`Enriquecimento falhou (exceção) — ${alvo.nome} (${alvo.cnpj}):`, err);
+        if (!errosVistos.includes(msg)) errosVistos.push(msg);
       }
     }
     persist(atual);
@@ -856,7 +862,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     setEnriquecendo(false);
     toast.success(
       `Enriquecimento concluído: ${ok} empresa(s) atualizada(s)` +
-        (falhas > 0 ? ` · ${falhas} sem dados (CNPJ inválido ou não encontrado)` : "") +
+        (falhas > 0 ? ` · ${falhas} falharam (${errosVistos.slice(0, 2).join("; ")})` : "") +
         ". Campos preenchidos manualmente foram preservados.",
     );
   }
