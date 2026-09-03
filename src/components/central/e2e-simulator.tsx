@@ -48,7 +48,6 @@ const LEAD_TESTE = {
   cargo: "Diretor Financeiro",
   telefone: "(41) 99999-0000",
   email: "carlos.andrade@metalurgicaparana.com.br",
-  rd_deal_id: "TEST-METALURGICA-PR",
 };
 
 const FOLLOWUPS_TESTE = [
@@ -206,7 +205,6 @@ export function E2ESimulator() {
         cnpj: c.cnpj,
         contato: c.contato,
         cargo: "Diretor",
-        rd_deal_id: `TEST-CALC-${c.cnpj.slice(-7, -3)}`,
         status: c.status,
         data_reuniao: iso(addBusinessDays(new Date(), 3)),
         valor_credito: c.credito,

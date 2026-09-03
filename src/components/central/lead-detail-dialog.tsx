@@ -225,7 +225,7 @@ FORO: Comarca da sede do Contratante.`;
 type Props = {
   lead: Lead | null;
   onClose: () => void;
-  /** Notifica a Central para replicar a mudança no RD Station / recarregar. */
+  /** Notifica a Central para recarregar após a mudança. */
   onStageChange?: (lead: Lead, next: LeadStatus, obs: string) => void;
 };
 
@@ -440,7 +440,6 @@ function LeadForm({ lead }: { lead: Lead }) {
     cargo: lead.cargo ?? "",
     telefone: lead.telefone ?? "",
     email: lead.email ?? "",
-    rd_deal_id: lead.rd_deal_id ?? "",
     proximo_passo: lead.proximo_passo ?? "",
     data_reuniao: toDatetimeLocal(new Date(lead.data_reuniao)),
     ultima_observacao: lead.ultima_observacao ?? "",
@@ -454,8 +453,7 @@ function LeadForm({ lead }: { lead: Lead }) {
       cargo: lead.cargo ?? "",
       telefone: lead.telefone ?? "",
       email: lead.email ?? "",
-      rd_deal_id: lead.rd_deal_id ?? "",
-      proximo_passo: lead.proximo_passo ?? "",
+        proximo_passo: lead.proximo_passo ?? "",
       data_reuniao: toDatetimeLocal(new Date(lead.data_reuniao)),
       ultima_observacao: lead.ultima_observacao ?? "",
     });
@@ -484,9 +482,6 @@ function LeadForm({ lead }: { lead: Lead }) {
         </Field>
         <Field label="E-mail">
           <Input value={form.email} onChange={set("email")} />
-        </Field>
-        <Field label="ID do negócio (RD Station)">
-          <Input value={form.rd_deal_id} onChange={set("rd_deal_id")} />
         </Field>
         <Field label="Próximo compromisso">
           <Input type="datetime-local" value={form.data_reuniao} onChange={set("data_reuniao")} />

@@ -119,7 +119,6 @@ export type Lead = {
   telefone?: string;
   email?: string;
   proximo_passo?: string;
-  rd_deal_id: string;
   status: LeadStatus;
   em_followup_frio: boolean;
   data_reuniao: string; // ISO — próximo compromisso
@@ -390,7 +389,7 @@ function persist(list: Lead[]) {
 
 /**
  * Localiza um lead por CNPJ/nome. Ignora leads excluídos (soft-delete) de
- * propósito: sincronizações automáticas (agenda, RD Station etc.) nunca
+ * propósito: sincronizações automáticas (agenda etc.) nunca
  * devem ressuscitar um lead excluído sozinhas — só `restoreLead` faz isso,
  * por ação explícita do operador.
  */
@@ -430,7 +429,6 @@ export function upsertLead(input: UpsertLeadInput): Lead {
           empresa: input.empresa,
           contato: "",
           cargo: "",
-          rd_deal_id: "",
           status: "reuniao_agendada",
           em_followup_frio: false,
           data_reuniao: input.data_reuniao ?? now,

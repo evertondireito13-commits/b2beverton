@@ -1,7 +1,7 @@
 // Registro permanente de empresas excluídas da Central de Reuniões.
 //
 // SEM ISSO, a empresa "ressuscita" sozinha: a Central sincroniza
-// automaticamente com as reuniões do RD Station toda vez que a tela abre
+// automaticamente com as reuniões sincronizadas toda vez que a tela abre
 // (hydrateFromMeetings). Se a reunião antiga ainda existe lá — e ela quase
 // sempre existe, foi assim que a empresa entrou aqui — o app acha que é uma
 // empresa "nova" e recria o lead, mesmo depois de excluído.

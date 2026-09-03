@@ -3,7 +3,7 @@ import { useHotkey } from "@/hooks/use-hotkey";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { generateWithAI, extractContactNameWithAI, lookupCnpj, sendRdStationNote, fetchRdStationDeal, transcribeAudio, searchCompanyByName, enrichPhones, searchRdDeals, searchRdStationDeals, interpretarStatusConversa, analisarConversaEstruturada, analisarConversaAvancada, type AnaliseConversa, type AnaliseAvancada } from "@/lib/prospeccao.functions";
+import { generateWithAI, extractContactNameWithAI, lookupCnpj, transcribeAudio, searchCompanyByName, enrichPhones, interpretarStatusConversa, analisarConversaEstruturada, analisarConversaAvancada, type AnaliseConversa, type AnaliseAvancada } from "@/lib/prospeccao.functions";
 import { logCall } from "@/lib/call-logs.functions";
 import { cancelPendingFollowUpsForCompany, createFollowUp, extractFollowUpFromCall, listFollowUps, type FollowUp } from "@/lib/follow-ups.functions";
 import { upsertLead as upsertLeadCentral, isLeadIsolated, findLead, addLeadFollowUp, updateLead as updateLeadCentral } from "@/lib/leads-store";
@@ -144,7 +144,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 import { CallRecorderButton } from "@/components/call-recorder-button";
-import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, rdDealIdKey, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
+import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
 import { PromptLibraryPanel, inferirSegmentoPorCnae, montarLeadFallback, preencherTagsDoScript, contemAlucinacaoDeExtracao, compileScriptLocally, parseLeadFromDados, type ActiveLeadData } from "@/components/prospeccao/shared";
 
 export function PosLigacao({
@@ -164,17 +164,12 @@ export function PosLigacao({
   const [lastRegContato, setLastRegContato] = useState<string>(rascunhoPos.lastRegContato ?? "");
   const [lastRegCargo, setLastRegCargo] = useState<string>(rascunhoPos.lastRegCargo ?? "");
   const [loading, setLoading] = useState(false);
-  const [dealId, setDealId] = useState<string>(
-    rascunhoPos.dealId ??
-      (typeof window !== "undefined" ? (window.localStorage.getItem(rdDealIdKey()) ?? "") : ""),
-  );
 
   useEffect(() => {
     updateRascunho({
       pos: {
         descricao,
         historico,
-        dealId,
         historicoOpen,
         lastRegId,
         lastRegName,
@@ -183,12 +178,11 @@ export function PosLigacao({
         lastRegCargo,
       },
     });
-  }, [descricao, historico, dealId, historicoOpen, lastRegId, lastRegName, lastRegCnpj, lastRegContato, lastRegCargo]);
+  }, [descricao, historico, historicoOpen, lastRegId, lastRegName, lastRegCnpj, lastRegContato, lastRegCargo]);
 
   function limparRascunhoPos() {
     setDescricao("");
     setHistorico("");
-    setDealId("");
     setLastRegId(null);
     setLastRegName("");
     setLastRegCnpj(null);
@@ -198,7 +192,6 @@ export function PosLigacao({
       pos: {
         descricao: "",
         historico: "",
-        dealId: "",
         lastRegId: null,
         lastRegName: "",
         lastRegCnpj: null,
@@ -209,8 +202,6 @@ export function PosLigacao({
   }
 
 
-  const [sending, setSending] = useState(false);
-  const [fetching, setFetching] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSecs, setRecordingSecs] = useState(0);
@@ -348,13 +339,10 @@ export function PosLigacao({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const runGenerate = useServerFn(generateWithAI);
-  const runSendRd = useServerFn(sendRdStationNote);
-  const runFetchRd = useServerFn(fetchRdStationDeal);
   const runTranscribe = useServerFn(transcribeAudio);
   const runInterpretarStatus = useServerFn(interpretarStatusConversa);
   const runAnalise = useServerFn(analisarConversaEstruturada);
   const runAnaliseAvancada = useServerFn(analisarConversaAvancada);
-  const runSearchDeals = useServerFn(searchRdDeals);
 
 
 
@@ -490,96 +478,6 @@ export function PosLigacao({
     };
   }, []);
 
-  function cleanDealId(raw: string) {
-    return raw.match(/[a-f0-9]{24}/i)?.[0] ?? raw.trim();
-  }
-
-  async function handleFetchRd() {
-    const cleanId = cleanDealId(dealId);
-    if (!cleanId) {
-      toast.error("Informe o ID ou link do negócio no RD.");
-      return;
-    }
-    setFetching(true);
-    try {
-      const r = await runFetchRd({ data: { dealId: cleanId } });
-      if ("notFound" in r && r.notFound) {
-        toast.error(`Negócio ${cleanId} não encontrado no RD Station. Confira o ID/link.`);
-        return;
-      }
-      setDealId(cleanId);
-      if ("semConteudo" in r && r.semConteudo) {
-        toast.warning("Este negócio não possui notas nem atividades no RD Station.");
-        return;
-      }
-      if (!r.texto) {
-        toast.warning("Nenhum texto retornado pelo RD Station.");
-        return;
-      }
-      setDescricao(r.texto);
-      toast.success("Dados carregados do RD Station CRM!");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao buscar no RD");
-    } finally {
-      setFetching(false);
-    }
-  }
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (dealId) window.localStorage.setItem(rdDealIdKey(), dealId);
-    else window.localStorage.removeItem(rdDealIdKey());
-    // Vínculo permanente: grava o negócio do RD no cadastro da empresa (lead),
-    // para que ele volte preenchido nos próximos dias e na Central de Reuniões.
-    if (dealId && activeLead) {
-      const nome = activeLead.razaoSocial || activeLead.nomeFantasia || "";
-      const lead = findLead(nome, activeLead.cnpj ?? null);
-      if (lead && lead.rd_deal_id !== dealId) updateLeadCentral(lead.id, { rd_deal_id: dealId });
-    }
-  }, [dealId, activeLead]);
-
-  // Pré-preenche o ID do negócio quando a empresa ativa já tem vínculo salvo.
-  useEffect(() => {
-    if (!activeLead || dealId) return;
-    const nome = activeLead.razaoSocial || activeLead.nomeFantasia || "";
-    const lead = findLead(nome, activeLead.cnpj ?? null);
-    if (lead?.rd_deal_id) setDealId(lead.rd_deal_id);
-  }, [activeLead, dealId]);
-
-  // Fallback: se a Pré-ligação não conseguiu vincular, tenta localizar o negócio
-  // no RD automaticamente (por CNPJ e depois por nome) — sem busca manual.
-  const autoLinkTried = useRef<string>("");
-  useEffect(() => {
-    if (!activeLead || dealId) return;
-    const nome = activeLead.razaoSocial || activeLead.nomeFantasia || "";
-    const chave = `${activeLead.cnpj ?? ""}|${nome}`;
-    if (!nome && !activeLead.cnpj) return;
-    if (autoLinkTried.current === chave) return;
-    autoLinkTried.current = chave;
-    let cancelado = false;
-    (async () => {
-      const termos = [activeLead.cnpj ?? "", nome].filter((t) => t && t.trim());
-      for (const termo of termos) {
-        try {
-          const r = await runSearchDeals({ data: { query: termo } });
-          const deals = r.deals ?? [];
-          // Só vincula sozinho quando o ID vem no formato aceito pelo envio.
-          const valido = deals.length === 1 ? deals[0].id.match(/^[a-f0-9]{24}$/i)?.[0] : null;
-          if (valido && !cancelado) {
-            setDealId(valido);
-            toast.success(`Negócio do RD vinculado automaticamente: ${deals[0].name}`);
-            return;
-          }
-        } catch {
-          /* silencioso: mantém a busca manual como alternativa */
-        }
-
-      }
-    })();
-    return () => {
-      cancelado = true;
-    };
-  }, [activeLead, dealId, runSearchDeals]);
 
 
   const runExtractFollowUp = useServerFn(extractFollowUpFromCall);
@@ -1047,41 +945,12 @@ export function PosLigacao({
 
   const runLogCall = useServerFn(logCall);
 
-  async function handleSendRd() {
-    if (!historico.trim()) {
-      toast.error("Gere o histórico primeiro");
-      return;
-    }
-    const cleanId = cleanDealId(dealId);
-    if (!cleanId) {
-      toast.error("Informe o ID ou link do negócio no RD.");
-      return;
-    }
-    setSending(true);
-    try {
-      await runSendRd({ data: { dealId: cleanId, text: historico } });
-      setDealId(cleanId);
-      // Atividade já foi registrada em handleGenerate; aqui só anexa no RD.
-      toast.success("Histórico anexado com sucesso ao negócio no RD Station CRM!");
-      // Obs.: a ligação já foi registrada no relatório quando o histórico foi gerado
-      // (handleGenerate → runLogCall). Aqui apenas anexamos no RD.
-
-
-    } catch (err) {
-      toast.error(
-        `${err instanceof Error ? err.message : "Falha ao enviar ao RD"} — ID enviado: ${cleanId}`,
-      );
-    } finally {
-
-      setSending(false);
-    }
-  }
 
   return (
     <Card className="relative overflow-hidden border-border bg-card p-0 shadow-sm">
       <CardHeader className="flex flex-col items-start gap-2 space-y-0 rounded-none border-b border-navy-deep bg-navy-deep px-4 py-4 text-white sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6">
         <CardTitle className="font-display text-base tracking-wide text-white sm:text-lg">
-          Pós-ligação · Histórico para o RD
+          Pós-ligação · Histórico da ligação
         </CardTitle>
         <div className="flex flex-wrap items-center gap-3" />
       </CardHeader>
@@ -1171,21 +1040,6 @@ export function PosLigacao({
           )}
         </div>
 
-        <div className="space-y-1">
-          <Label htmlFor="deal-id" className="text-xs">
-            Negócio no RD Station CRM (ID ou link)
-          </Label>
-          <Input
-            id="deal-id"
-            placeholder="ID ou link do negócio (crm.rdstation.com/deals/…)"
-            value={dealId}
-            onChange={(e) => setDealId(e.target.value)}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Preencha aqui para usar o botão “Puxar do RD” abaixo. O envio da anotação
-            continua no rodapé desta tela.
-          </p>
-        </div>
 
         <div>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1193,18 +1047,6 @@ export function PosLigacao({
               Descrição da ligação
             </Label>
             <div className="flex flex-wrap items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={handleFetchRd}
-                disabled={fetching || !dealId.trim()}
-                className="h-6 px-2 text-xs"
-                title="Buscar notas e atividades desse negócio no RD Station"
-              >
-                {fetching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Search className="mr-1 h-3 w-3" />}
-                Puxar do RD
-              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1401,31 +1243,6 @@ export function PosLigacao({
         <DinamicaLigacaoCard analise={analiseAvancada} />
 
 
-        <div className="space-y-2 rounded-md border border-dashed p-3">
-          <Label htmlFor="deal-id" className="text-xs">
-            Enviar ao RD Station CRM
-          </Label>
-          <div className="flex gap-2">
-            <Button
-              onClick={handleSendRd}
-              disabled={sending}
-              size="lg"
-              className="h-11 px-6 text-base font-semibold"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <Send className="mr-2 h-4 w-4" />
-                  Enviar ao RD
-                </>
-              )}
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Cria uma nota no negócio via API do RD CRM. O ID fica salvo neste navegador.
-          </p>
-        </div>
       </CardContent>
     </Card>
   );
