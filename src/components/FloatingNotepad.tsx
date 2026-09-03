@@ -89,6 +89,7 @@ export default function FloatingNotepad() {
   const [copyFlash, setCopyFlash] = useState(false);
   const [toast, setToast] = useState<{ msg: string; x: number; y: number } | null>(null);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
 
   const winRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -97,7 +98,6 @@ export default function FloatingNotepad() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bubbleDragged = useRef(false);
-  const labelRefs = useRef<Record<string, HTMLSpanElement | null>>({});
 
   const activeTab = useCallback(
     (s: NotepadState = state) => s.tabs.find((t) => t.id === s.activeTabId) || s.tabs[0],
@@ -245,17 +245,24 @@ export default function FloatingNotepad() {
   }, [state.activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- focus tab label when renaming ----------
+  const editInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!editingTabId) return;
-    const el = labelRefs.current[editingTabId];
+    const el = editInputRef.current;
     if (!el) return;
     el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
+    el.select();
   }, [editingTabId]);
+
+  function startRename(tab: NoteTab) {
+    setEditingValue(tab.name);
+    setEditingTabId(tab.id);
+  }
+
+  function commitRename() {
+    if (editingTabId) renameTab(editingTabId, editingValue);
+    setEditingTabId(null);
+  }
 
   function handleEditorInput() {
     const val = editorRef.current?.value ?? "";
@@ -406,6 +413,8 @@ export default function FloatingNotepad() {
           color:var(--fnp-ink-soft); border-right:1px solid var(--fnp-border); cursor:pointer;
           white-space:nowrap; max-width:130px; position:relative; }
         .fnp-tab .fnp-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; outline:none; }
+        .fnp-label-input{ width:70px; font: inherit; color: inherit; background: var(--fnp-paper);
+          border: 1px solid var(--fnp-accent); border-radius: 3px; padding: 0 3px; outline: none; }
         .fnp-tab.active{ color:var(--fnp-ink); background:var(--fnp-paper); font-weight:500; }
         .fnp-tab.active::after{ content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--fnp-accent); }
         .fnp-closetab{ width:14px; height:14px; border-radius:3px; display:flex; align-items:center;
@@ -467,30 +476,35 @@ export default function FloatingNotepad() {
                 className={"fnp-tab" + (tab.id === state.activeTabId ? " active" : "")}
                 onClick={() => setActiveTab(tab.id)}
               >
-                <span
-                  ref={(el) => {
-                    labelRefs.current[tab.id] = el;
-                  }}
-                  className="fnp-label"
-                  contentEditable={editingTabId === tab.id}
-                  suppressContentEditableWarning
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    setEditingTabId(tab.id);
-                  }}
-                  onBlur={(e) => {
-                    setEditingTabId(null);
-                    renameTab(tab.id, e.currentTarget.textContent || "");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      (e.target as HTMLElement).blur();
-                    }
-                  }}
-                >
-                  {tab.name}
-                </span>
+                {editingTabId === tab.id ? (
+                  <input
+                    ref={editInputRef}
+                    className="fnp-label-input"
+                    value={editingValue}
+                    onChange={(e) => setEditingValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingTabId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="fnp-label"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startRename(tab);
+                    }}
+                  >
+                    {tab.name}
+                  </span>
+                )}
                 {state.tabs.length > 1 && (
                   <span
                     className="fnp-closetab"
