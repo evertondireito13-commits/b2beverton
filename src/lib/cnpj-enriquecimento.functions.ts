@@ -21,13 +21,20 @@ export const consultarCnpj = createServerFn({ method: "GET" })
     const digitos = data.cnpj.replace(/\D/g, "");
     if (digitos.length !== 14) return { ok: false, erro: "CNPJ inválido" };
 
+    // Timeout manual (compatível com qualquer runtime, ao contrário de
+    // AbortSignal.timeout, que pode não existir dependendo do ambiente).
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
     try {
       const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${digitos}`, {
-        signal: AbortSignal.timeout(10_000),
+        signal: controller.signal,
         headers: { Accept: "application/json" },
       });
+      clearTimeout(timeoutId);
+
       if (res.status === 404) return { ok: false, erro: "CNPJ não encontrado" };
-      if (!res.ok) return { ok: false, erro: `Consulta falhou (${res.status})` };
+      if (!res.ok) return { ok: false, erro: `Consulta falhou (HTTP ${res.status})` };
 
       const j = (await res.json()) as {
         uf?: string;
@@ -37,8 +44,6 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         opcao_pelo_mei?: boolean | null;
       };
 
-      // A base pública só informa Simples/MEI com certeza; Presumido x Real
-      // não constam — nesses casos deixamos vazio para preenchimento manual.
       let regime: string | null = null;
       if (j.opcao_pelo_mei) regime = "MEI";
       else if (j.opcao_pelo_simples) regime = "Simples Nacional";
@@ -50,7 +55,13 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         setor: j.cnae_fiscal_descricao ?? null,
         regime,
       };
-    } catch {
-      return { ok: false, erro: "Falha de rede ao consultar o CNPJ" };
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const msg = err instanceof Error ? err.message : String(err);
+      const abortado = err instanceof Error && err.name === "AbortError";
+      return {
+        ok: false,
+        erro: abortado ? "Tempo esgotado ao consultar (10s)" : `Erro técnico: ${msg}`,
+      };
     }
   });
