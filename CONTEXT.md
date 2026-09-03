@@ -1,102 +1,89 @@
+[CONTEXT.md](https://github.com/user-attachments/files/31795747/CONTEXT.md)
 # CONTEXT.md — Painel Central de Prospecção (b2beverton)
 
 > Este arquivo existe pra qualquer sessão nova do Claude (em qualquer conta) entender o projeto **sem precisar de upload de zip**. Basta colar o link bruto (raw) deste arquivo no chat e pedir pra buscar (fetch). Atualize este arquivo sempre que algo relevante mudar.
 
 ## Visão geral
-- **Painel Central de Prospecção**: ferramenta de prospecção B2B para gestão de leads, histórico de empresas, follow-ups e reuniões (BHM Advogados).
-- Everton é **usuário não-técnico**, sem créditos de IA restantes no Lovable — mudanças de código são feitas manualmente (Claude edita, Everton cola no GitHub via editor web).
-- Stack: **Lovable (builder/deploy) + React/TanStack Start (frontend) + Supabase (backend/banco de dados)**.
-- Repositório: https://github.com/evertondireito13-commits/b2beverton (branch `main`)
+- **Painel Central de Prospecção**: ferramenta de prospecção B2B para gestão de leads, histórico de empresas, follow-ups e reuniões.
+- Everton é **usuário não-técnico**, sem créditos de IA restantes no Lovable — mudanças de código precisam ser feitas manualmente.
+- Stack: **Lovable (builder/deploy) + React/TanStack (frontend) + Supabase via Lovable Cloud (backend/banco de dados)**.
+- Repositório: https://github.com/evertondireito13-commits/b2beverton
 - Projeto conectado ao Lovable (sync automático via git — cuidado, o Lovable AI pode sobrescrever edições manuais feitas direto no GitHub).
 
-## Fluxo de trabalho (importante)
-- **Editar direto pelo GitHub (interface web)** — Edit no arquivo → alterar → Commit changes. Editar localmente (Notepad) NÃO sincroniza com o app publicado.
-- Everton prefere **substituir o arquivo inteiro** (abrir, Ctrl+A, apagar, colar novo conteúdo, salvar) em vez de aplicar trechos/patches — mais fácil pra ele.
+## Fluxo de edição de código (importante)
+- **Editar direto pelo GitHub (interface web)** — abrir arquivo → ícone de lápis (Edit) → Ctrl+A → Delete → colar → Commit changes direto na `main`.
+- **Editar localmente (ex: Notepad, Git Bash) NÃO é usado** — Everton não usa Git local, só o editor web do GitHub. O Lovable sincroniza sozinho a partir da `main`.
 - Sempre que o Lovable AI mexer em algo por conta própria, **verificar se não sobrescreveu correções feitas manualmente no GitHub**.
-- Requisito permanente: tudo precisa funcionar bem em computador, tablet e celular (responsivo) — aplicar automaticamente, sem precisar narrar isso a cada pedido.
-- Everton quer feedback de usabilidade geral (fluxo, organização, redundância), não só comentários pontuais de responsividade/tamanho de botão.
-- Checar proativamente as conexões entre partes do app (CNPJ↔RD↔Preparação Noturna↔Follow-up↔Painel Executivo↔Agenda) sem esperar ele apontar cada uma — regra permanente.
-- Pedidos de mudança de UX/visual devem deixar explícito o que NÃO pode ser removido, com checklist de verificação pós-entrega (Everton tem receio de perder funcionalidade).
-- **Convenção "SALVAR"**: quando Everton escrever `SALVAR` sozinho numa mensagem, o Claude deve (1) resumir o que foi resolvido desde a última atualização, (2) reescrever este CONTEXT.md inteiro atualizado pronto pra colar no GitHub, (3) fazer isso a qualquer momento, não só no fim da conversa.
+- Acesso ao banco: aba **Cloud** do próprio Lovable → SQL editor (não é o supabase.com externo, é integrado).
 
 ## Estrutura relevante do repo
-- `src/` — código-fonte da aplicação (React + TanStack Start).
-- `supabase/` — configuração/migrations do backend.
-- `.lovable/` — metadados do Lovable.
-- `AGENTS.md` — regras do projeto para agentes de IA.
-- Principais arquivos já trabalhados:
-  - `src/components/preparacao-noturna.tsx` — tela Preparação Noturna completa (lista de empresas, EditEmpresaDialog, filtros, tipo `Empresa`, tudo num único arquivo).
-  - `src/lib/cnpj-enriquecimento.functions.ts` — server function `consultarCnpj` (BrasilAPI, protegida pelo gate BHM).
-  - `src/lib/lead-score.ts` — scoring/ranking de prospecção.
-  - `src/lib/company-ficha.ts` — monta ficha da empresa no Painel Executivo.
-  - `src/**/cloud-store.ts` — sincronização com Supabase (`hydrateFromCloud`).
-  - `automatic-backup.tsx` / `data-backup.functions.ts` — backup automático (`getBestAppDataBackup`).
+- `src/lib/cloud-store.ts` — sincronização com a nuvem (`hydrateFromCloud`).
+- `src/lib/cnpj-raw-parser.ts` — parser determinístico (`parseDadosCnpj`) do texto colado em "Dados Brutos".
+- `src/lib/cnpj-enriquecimento.functions.ts` — server function que consulta a BrasilAPI (botão "Enriquecer via CNPJ").
+- `src/components/preparacao-noturna.tsx` — tela principal de cadastro/edição de empresas, cadastro novo, botão Enriquecer, modal de edição.
+- `src/components/leads-central-panel.tsx` — Central de Reuniões (cards, botão excluir).
+- `src/**/automatic-backup.tsx`, `data-backup.functions.ts` — backup automático (`getBestAppDataBackup`).
+- `src/**/painel-executivo.tsx`, `lead-score.ts` — dashboard executivo e score de leads.
 
-## Tabelas principais no Supabase
-- `leads`, `historico_empresas`, `follow_ups`
+## Tabelas principais no Supabase (via Lovable Cloud)
+- `leads`
+- `historico_empresas`
+- `follow_ups`
 
-## Estrutura de navegação final decidida
-Prospectar / Acompanhar (Follow-up, Agenda, Painel Executivo) / Central de Reuniões / Resultados (Relatórios, Comissão, Centro de Estratégia).
+## Duas fontes de dados de empresa — nunca podem se misturar
+1. **"Dados Brutos" (colar texto)** → roda `parseDadosCnpj` (`cnpj-raw-parser.ts`). Extrai a partir do texto que Everton cola (formato tipo Casa dos Dados/CNPJ.biz): Razão Social, CNPJ, Telefone, E-mail, Contato (1º sócio/administrador), Cargo, Observações (CNAE principal + Endereço + Capital social), e agora também **UF, Setor e Regime tributário**.
+2. **Botão "Enriquecer via CNPJ"** → chama a BrasilAPI (`cnpj-enriquecimento.functions.ts`). Preenche UF, Setor, Regime, Telefone, E-mail e joga o restante (situação cadastral, natureza jurídica, porte, data de abertura, capital social, endereço, sócios) em Observações **só se Observações estiver vazio**.
+- **Regra de ouro em ambos**: nunca sobrescrever campo que já tem valor — só preencher o que está vazio.
 
-## ✅ CONCLUÍDO nesta sessão: Filtros de CNPJ/UF/Setor/Regime na Preparação Noturna
-Recurso pedido pelo Everton (queria um filtro parecido com uma referência visual que mandou). Já estava parcialmente feito numa sessão anterior sem créditos Lovable; **finalizado agora**:
-- `consultarCnpj` (BrasilAPI) retorna UF, município, setor (CNAE) e regime (Simples/MEI quando consta).
-- Tipo `Empresa` com `uf`, `setor`, `regime`; constantes `UFS_BR` e `REGIMES`.
-- Barra de filtros (busca por razão social/CNPJ, status, UF, setor, regime incl. "Não informado"), `empresasFiltradas`, `limparFiltros`, botão "Enriquecer via CNPJ" (`enriquecerCnpjs`, só preenche campos vazios).
-- **Feito agora**: UF/Setor/Regime adicionados ao `EditEmpresaDialog` (select UF, campo texto Setor, select Regime — mesmo padrão visual dos filtros — incluídos no `buildPatch`); badges de UF e Setor na linha da empresa (`SortableEmpresaRow`).
-- Typecheck (`tsc --noEmit`) rodado e limpo, sem erros.
-- Arquivo entregue completo pra Everton colar no GitHub. **Aguardando ele confirmar visualmente no preview/produção.**
+## Problemas identificados e correções feitas
 
-## Arquitetura conhecida do app (achados recorrentes)
-- Havia 3 sistemas paralelos de follow-up sem sincronia (FollowUp no banco/tela followup, LeadFollowUp no lead/drawer, FollowUpLocal calculado pro Agenda a partir do histórico) — causa raiz de vários bugs de "não reflete em outra aba". Pedidos de unificação enviados.
-- Vários botões de "enviar empresa pra Pré-ligação" usavam mecanismos diferentes — corrigido com função compartilhada, CONFIRMADO aplicado.
-- `scoreEmpresas()`/`rankingProspeccao()` (lead-score.ts) tinham bug: incluíam empresas já convertidas em reunião (bônus +35 indevido) e não excluíam recusas comerciais nem empresas sem histórico. Corrigido.
-- Critério Quente/Morno/Frio misturava urgência de calendário com qualidade real do lead — pedido de separação enviado.
-- Preparação Noturna JÁ TEM detecção automática de grupo matriz/filial (mesmo CNPJ raiz) com diálogo de escolha de unidade ao enviar pra Pré-ligação — implementado.
-- Drag-and-drop: SIM no kanban da Central de Reuniões e na Preparação Noturna; NÃO na fila de Follow-up, Ranking do Painel Executivo, nem menu lateral.
+### 1. Perda de dados via `hydrateFromCloud` (cloud-store.ts) — CORRIGIDO e validado
+- Causa raiz: sobrescrevia localStorage com dados vazios da nuvem (pós-transferência de conta com Supabase vazio).
+- Correção: merge por ID (local + nuvem), com re-sync de itens locais que não estavam na nuvem.
+- Validado: 5 empresas em "Reunião Agendada" sobrevivem a F5/refresh.
 
-## Itens concluídos e confirmados (não precisa retrabalhar)
-- Unificação/reorganização geral do CRM (drawer de empresa, navegação em grupos, visual profissional) — concluído.
-- Responsividade geral (tabelas viram cards, toque 40px, sem scroll horizontal) — concluído.
-- Botão "Ligar" do Ranking e ficha de empresa carregando dados na Pré-ligação — confirmado aplicado.
-- Sync Pós-ligação → Preparação Noturna (`markPreparacaoRealizadaByCompany`) já existe.
-- Filtros CNPJ/UF/Setor/Regime na Preparação Noturna (ver seção acima) — completo, aguardando confirmação visual.
+### 2. Restauração de backup errada (automatic-backup.tsx) — CORRIGIDO
+- Trocado "backup mais recente" por "backup com mais registros" via `getBestAppDataBackup`.
 
-## Pendente / em andamento
-- Correção do Ranking (lead-score.ts usando `followUp?.scheduled_at` como fonte única de "follow-up vencido" em vez de regex de texto) — arquivo pronto, **aguardando Everton aplicar e dar git push**.
-- Bug reportado: empresas somem da Preparação Noturna ao atualizar a página — ainda não investigado.
-- Dashboard de Volume: trocar regex de texto por `Lead.data_reuniao` real; adicionar série de follow-ups; menos texto corrido, mais visual.
-- Barra lateral global reduzida (só nav + card Follow-ups; remover Volume do Dia, Notificações quebrada, CallTimerWidget, placeholder de e-mail).
-- WhatsApp "Contato rápido" — Everton precisa testar de novo pra dizer se o botão trava sem telefone (pedido de remoção da Pós-ligação já enviado).
-- Ficha da empresa (Painel Executivo) deve preencher telefone/e-mail vazios com dados já cadastrados na Preparação Noturna, somando (não substituindo) com o que veio da ligação — pedido enviado.
-- Central de Reuniões: esconder "Simulador E2E" em produção, permitir excluir lead de teste, novo status "pausado" com data de retomada, reduzir controles empilhados no topo — pedido enviado.
-- Central de Reuniões com duplicação de cards (causa suspeita: `hydrateFromMeetings()` sem match confiável por CNPJ) — botão "Mesclar duplicados" existe (canto direito da fileira de filtros, estilo discreto) mas usuário não achava; pedido de destaque visual enviado; pedido de correção da causa raiz (hydrateFromMeetings conservador) também enviado.
-- Métricas de funil (conversão ligação→decisor→reunião→fechamento) e testes automatizados (Vitest cobrindo lead-score.ts/leads-store.ts/historico-store.ts/follow-ups.functions.ts/resultado-reuniao.functions.ts) — priorizados, pedidos enviados.
-- Itens de menor prioridade sem ordem definida: cadência, LGPD, confiança nos dados de IA, log de auditoria, offline.
+### 3. Parser de Dados Brutos não extraía UF/Setor/Regime — CORRIGIDO nesta sessão
+- **Sintoma**: colar o texto bruto de uma empresa (ex.: HEZUS LTDA) preenchia Telefone/E-mail/Observações, mas UF, Setor e Regime tributário ficavam vazios — só o botão "Enriquecer via CNPJ" preenchia esses três.
+- **Causa raiz**: `parseDadosCnpj` nunca teve lógica pra extrair esses três campos do texto colado — não era bug, era ausência de funcionalidade.
+- **Correção**: adicionada extração de UF (a partir da linha de endereço, validada contra a lista oficial de UFs), Setor (descrição do CNAE principal — mesma fonte que o botão Enriquecer usa) e Regime (busca no texto por "Simples Nacional", "MEI", "Lucro Presumido", "Lucro Real").
+- **Validado**: rodando o parser de verdade (`npx tsx`) contra o texto real da HEZUS LTDA → saiu `uf: "PR"`, `setor: "Treinamento em desenvolvimento profissional e gerencial"`, `regime: "Simples Nacional"`, sem alterar nenhum campo que já funcionava.
+- **Proteção adicional**: no cadastro, se o CNPJ colado já existe (mesma unidade), a fusão de dados agora preserva UF/Setor/Regime já existentes — não sobrescreve mais.
 
-## Projeto "Resultado da reunião" — desenhado, pedido formalizado e enviado
-Mapeamento de 11 resultados possíveis de uma reunião (aceite imediato, recusa, aprovação pendente, timing inadequado, reagendamento, no-show, sem poder de decisão, desqualificação técnica, fechamento direto, pivô pra parceria, mudança de escopo), cada um com sua consequência de status/campo. Ação universal "Enviar ata" (gerada fora do app via Gemine, só marcar "ata enviada"). UI: diálogo único "Registrar resultado da reunião" com anotação obrigatória.
-- Novos campos pedidos: status "pausado" (pausado_ate opcional, pausado_motivo[], fase_antes_pausa), "nao_qualificado" (separado de perdido nas métricas), tipo_negociacao (cliente_direto/parceria_operacional), area_negociacao (tributario/reestruturacao_financeira), fechamento_direto (bool), no_show_count.
-- Funil pós-reunião confirmado: Resgate é tag dentro de "Reunião Agendada" (não coluna própria); Follow-up interno = LeadFollowUp já separado do frio; Levantamento de Docs confirmado. Ata manual (campo `ata_executiva` já existe), sem integração automática Gmail/Drive por enquanto.
-- Nova aba "Comunicações" (ata/e-mails/whatsapp num só lugar) e card do lead reestruturado em formato progressivo/wizard — pedido enviado.
-- Complementos pedidos: (1) Follow-up interno da Central de Reuniões deve reaproveitar a timeline rica já usada no Follow-up frio (company-ficha.ts/company-timeline-sheet.tsx); (2) diálogo de resultado deve aceitar texto livre com IA sugerindo qual das 11 opções se aplica (mesmo padrão do extractFollowUpFromCall).
-- Próximo passo: Everton ainda vai mandar a parte "pós-reunião" (o que acontece depois que a reunião já rolou) como pedido separado.
+### 4. Modal de edição não reprocessava "Dados Brutos" ao colar texto novo — CORRIGIDO nesta sessão
+- **Sintoma**: ao abrir uma empresa já cadastrada e colar um texto novo no campo "Dados Brutos", nada era preenchido automaticamente (Telefone, E-mail, Contato, Cargo, Razão Social, Observações, UF, Setor, Regime).
+- **Causa raiz**: o `onChange` do textarea só salvava o texto puro (`setTextoBruto`), nunca rodava `parseDadosCnpj` de novo. A extração só acontecia uma vez, ao abrir o modal, usando o texto que já estava salvo no banco.
+- **Correção**: criada `handleTextoBrutoChange`, que roda `parseDadosCnpj` a cada edição do campo e preenche **somente os campos que estiverem vazios no momento** — nunca sobrescreve o que já foi preenchido manualmente ou via Enriquecer.
+
+### 5. Botão "Enriquecer via CNPJ" ampliado (sessão anterior a esta)
+- Antes só buscava UF, Setor, Regime. Agora também busca Telefone, E-mail, situação cadastral, natureza jurídica, porte, data de abertura, capital social, endereço e sócios — o que não tem campo próprio no cadastro cai em Observações (só se Observações estiver vazio).
+
+### 6. Supabase mal configurado — AINDA PENDENTE
+- Falta confirmar a `SUPABASE_SERVICE_ROLE_KEY` no projeto Lovable Cloud correto.
+
+## Pendências abertas (resumo)
+1. **HTTP 429 no "Enriquecer via CNPJ"**: BrasilAPI retornou rate limit ("Consulta falhou (HTTP 429)") numa tentativa recente — falta implementar delay/retry com backoff entre chamadas. Ainda não corrigido.
+2. Adicionar empresa manualmente na Central de Reuniões (delete já existe, add está pendente).
+3. Configurar `SUPABASE_SERVICE_ROLE_KEY`.
+4. Novos módulos com tabela criada mas sem função/tela: Mural de Atualizações, Biblioteca de Conteúdos, Passagem de Bastão.
+5. Confirmar se a correção do `cloud-store.ts` sobreviveu a edições do Lovable AI por conta própria.
+6. Limpeza de arquivos soltos na raiz do repo (opcional).
 
 ## Aprendizados importantes (não esquecer)
 - Editar localmente **não sincroniza** — sempre usar o editor web do GitHub.
-- Falha silenciosa é o inimigo: lógica de sync com a nuvem precisa checar se os dados vindos da nuvem não estão vazios antes de sobrescrever dados locais.
-- Lógica de "restaurar backup" deve preferir o backup **mais completo**, não o mais recente.
-- Depois de qualquer atividade do Lovable AI no projeto, revisar os arquivos já corrigidos manualmente.
-
-## Pendências antigas ainda não confirmadas (Supabase/cloud-store)
-1. Confirmar se a correção do `cloud-store.ts` (hydrateFromCloud não sobrescrever com dados vazios) sobreviveu às edições do Lovable AI.
-2. Configurar `SUPABASE_SERVICE_ROLE_KEY` no projeto Supabase correto (backend apontava pra projeto novo/vazio).
-3. Repopular/confirmar dados nas tabelas `leads`, `historico_empresas`, `follow_ups`.
-4. Verificar se o Painel Executivo volta a mostrar registros depois que o cache/localStorage for restaurado corretamente.
-5. Limpar arquivos soltos na raiz do repo (zip antigo, markdown duplicado) — opcional, organização.
+- Falha silenciosa é o inimigo: qualquer sync com a nuvem precisa checar se os dados vindos de lá não estão vazios antes de sobrescrever local.
+- Backup deve preferir o **mais completo**, não o mais recente.
+- As duas fontes de enriquecimento (Dados Brutos colados vs. botão Enriquecer via CNPJ) devem continuar **isoladas uma da outra** e sempre respeitar "só preenche vazio, nunca sobrescreve".
+- Antes de entregar qualquer correção de parser/extração, **testar rodando o código de verdade** (`npx tsx` a partir da raiz do repo, clonado via `git clone --depth 1`) contra um texto real do usuário — não vale confiar só em leitura de código.
+- Everton identifica bugs com precisão e costuma estar certo quando diz que algo não está batendo — levar a sério imediatamente.
+- Todo arquivo entregue é **substituição completa**, nunca diff/trecho parcial.
 
 ---
 **Como usar este arquivo numa conta nova do Claude:**
 1. Cole o link bruto: `https://raw.githubusercontent.com/evertondireito13-commits/b2beverton/main/CONTEXT.md`
 2. Peça: "busca esse link e me diz que já entendeu o projeto."
-3. Só peça upload de arquivo específico (não o zip inteiro) se for mexer em algo pontual daquele arquivo.
+3. Só peça upload de arquivo específico (não o zip inteiro) se for mexer em algo pontual daquele arquivo — ou, melhor, clone o repo direto (`git clone --depth 1 https://github.com/evertondireito13-commits/b2beverton.git`) pra ler os arquivos com certeza de que estão atualizados.
+
+**Convenção "SALVAR":** quando o Everton escrever a palavra `SALVAR` sozinha numa mensagem, o Claude deve: (1) resumir o que foi resolvido/decidido nesta conversa desde a última atualização; (2) reescrever este arquivo CONTEXT.md inteiro, já atualizado, pronto pra ele copiar e colar no GitHub (Edit → Ctrl+A → colar → Commit changes); (3) não esperar o fim da conversa pra isso — pode e deve ser pedido a qualquer momento, assim que algo importante for concluído.
