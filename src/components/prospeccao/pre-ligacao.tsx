@@ -189,7 +189,7 @@ export function PreLigacao({
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // "Dirty" flag: vira true assim que o operador edita manualmente a Textarea
-  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI, RD Station,
+  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI,
   // Preparação Noturna, ACTIVE_LEAD_EVENT) NÃO podem sobrescrever o campo.
   const dadosDirtyRef = useRef<boolean>(false);
 
@@ -211,7 +211,7 @@ export function PreLigacao({
       const email = (detail.email ?? "").trim();
       const cnpjDigits = (detail.cnpj ?? "").replace(/\D/g, "");
       // Texto vindo da Preparação Noturna é dado bruto informado pelo operador.
-      // Ele deve ser preservado contra lookup/RD automático durante a compilação.
+      // Ele deve ser preservado contra lookup automático durante a compilação.
       if (texto && !dadosDirtyRef.current) {
         setDados(texto);
         dadosDirtyRef.current = true;
@@ -470,14 +470,6 @@ export function PreLigacao({
       setContingenciaAtiva(false);
       toast.success("Dados carregados. Ajuste o prompt se quiser e depois processe o script.");
 
-      // Dispara em paralelo a busca de negócios no RD (não bloqueia)
-      // Empresa identificada: já procura e vincula o negócio no RD sozinho.
-      if (!selectedDealId)
-        void buscarDealsRD(r.razaoSocial || r.nomeFantasia || digits, {
-          autoLink: true,
-          nomeEmpresa: r.razaoSocial || r.nomeFantasia || "",
-        });
-
 
       // Se já enriquecemos telefones para este CNPJ nesta sessão, restaura do cache.
       const cachedPhones = phonesCache.current.get(digits);
@@ -552,8 +544,6 @@ export function PreLigacao({
     }
     setLoadingBusca(true);
     setResultados([]);
-    // Dispara busca de negócios no RD em paralelo com a busca cadastral
-    void buscarDealsRD(termo);
     try {
       const r = await runSearchNome({ data: { nome: termo } });
       if (r.itens.length === 0) {
@@ -700,7 +690,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       await startCallRecording({ vadTimeoutMs: 45_000 });
       if (!getRunningTimer()) startTimer(nome || "Empresa", currentLeadState?.cnpj ?? cnpj ?? null);
     } catch {
-      /* microfone indisponível: segue com a transcrição do RD como fonte */
+      /* microfone indisponível: segue com a transcrição manual como fonte */
     }
   }
 
@@ -990,7 +980,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-xs font-semibold">
-                  Telefones para o RD
+                  Telefones da empresa
                   {loadingFones && <Loader2 className="h-3 w-3 animate-spin" />}
                   {telefones && telefones.telefones.length > 0 && (
                     <span className="rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-medium">
