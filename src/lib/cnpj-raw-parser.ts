@@ -10,11 +10,28 @@ export type DadosCnpj = {
   contato?: string;
   cargo?: string;
   observacoes?: string;
+  uf?: string;
+  setor?: string;
+  regime?: string;
 };
 
 const LIXO = /^(remover dados|ativa|inativa|baixada|suspensa|atualizado|regime tribut|sócios e administradores|atividades econômicas|inscrições estaduais|suframa|empresas|cnae\b)/i;
 
 const SUFIXOS = /\b(ltda|s\.?a\.?|eireli|me|epp|mei|sociedade|comercio|comércio|industria|indústria|servicos|serviços|participacoes|participações|brasil|group|holding)\b/i;
+
+// Mesmas listas usadas nos dropdowns do formulário (preparacao-noturna.tsx),
+// repetidas aqui só para validar o que o parser encontra no texto solto.
+const UFS_VALIDAS = new Set([
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
+  "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+]);
+
+const REGIMES_TEXTO: { regex: RegExp; label: string }[] = [
+  { regex: /\bsimples nacional\b/i, label: "Simples Nacional" },
+  { regex: /\bmei\b/i, label: "MEI" },
+  { regex: /\blucro presumido\b/i, label: "Lucro Presumido" },
+  { regex: /\blucro real\b/i, label: "Lucro Real" },
+];
 
 function limpar(l: string) {
   return l.replace(/\s+/g, " ").trim();
@@ -67,16 +84,31 @@ export function parseDadosCnpj(texto: string): DadosCnpj {
   // Observações: CNAE principal + endereço (linha com UF + CEP)
   const obs: string[] = [];
   const cnaeIdx = linhas.findIndex((l) => /principal/i.test(l));
+  let cnaeDesc: string | undefined;
   if (cnaeIdx >= 0) {
-    const desc = linhas.slice(cnaeIdx + 1).find((l) => l.length > 8 && !LIXO.test(l));
+    cnaeDesc = linhas.slice(cnaeIdx + 1).find((l) => l.length > 8 && !LIXO.test(l));
     const cod = linhas[cnaeIdx].match(/\d{4}-?\d?\/?\d{0,2}/)?.[0] ?? linhas[cnaeIdx - 1]?.match(/\d{4}-\d\/\d{2}/)?.[0];
-    if (desc) obs.push(`CNAE principal: ${[cod, desc].filter(Boolean).join(" — ")}`);
+    if (cnaeDesc) obs.push(`CNAE principal: ${[cod, cnaeDesc].filter(Boolean).join(" — ")}`);
   }
   const endereco = linhas.find((l) => /\b\d{5}-?\d{3}\b/.test(l));
   if (endereco) obs.push(`Endereço: ${endereco}`);
   const capital = texto.match(/R\$\s?[\d.,]+/);
   if (capital) obs.push(`Capital social: ${capital[0]}`);
   if (obs.length) out.observacoes = obs.join("\n");
+
+  // UF: extraída da própria linha de endereço (ex.: "Curitiba PR 80420-060")
+  if (endereco) {
+    const mUf = endereco.match(/\b([A-Z]{2})\b(?=\s*\d{5}-?\d{3}\b)/);
+    if (mUf && UFS_VALIDAS.has(mUf[1])) out.uf = mUf[1];
+  }
+
+  // Setor: mesma descrição do CNAE principal usada acima (igual ao que o
+  // botão "Enriquecer via CNPJ" já grava como setor via BrasilAPI).
+  if (cnaeDesc) out.setor = cnaeDesc;
+
+  // Regime tributário: procura os rótulos exatos usados no formulário
+  const regimeEncontrado = REGIMES_TEXTO.find((r) => r.regex.test(texto));
+  if (regimeEncontrado) out.regime = regimeEncontrado.label;
 
   return out;
 }
