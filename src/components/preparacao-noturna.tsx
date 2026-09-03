@@ -1733,6 +1733,21 @@ function EditEmpresaDialog({
     setRegime(empresa.regime ?? "");
   }, [empresa]);
 
+  // Ao colar/editar o texto bruto de uma empresa já existente, reprocessa e
+  // preenche apenas os campos que estiverem vazios NO MOMENTO — nunca
+  // sobrescreve o que já estiver preenchido (manual ou vindo do enriquecimento).
+  function handleTextoBrutoChange(novoTexto: string) {
+    setTextoBruto(novoTexto);
+    const auto = parseDadosCnpj(novoTexto);
+    setRazaoSocial((atual) => atual || auto.razaoSocial || atual);
+    setCnpj((atual) => atual || auto.cnpj || atual);
+    setContato((atual) => atual || auto.contato || atual);
+    setCargo((atual) => atual || auto.cargo || atual);
+    setTelefone((atual) => atual || auto.telefone || atual);
+    setEmail((atual) => atual || auto.email || atual);
+    setObservacoes((atual) => atual || auto.observacoes || atual);
+  }
+
   const open = empresa !== null;
 
   function buildPatch(): Empresa | null {
@@ -1831,7 +1846,7 @@ function EditEmpresaDialog({
             <Textarea
               rows={12}
               value={textoBruto}
-              onChange={(e) => setTextoBruto(e.target.value)}
+              onChange={(e) => handleTextoBrutoChange(e.target.value)}
               className="min-h-[240px] text-sm leading-relaxed"
             />
           </div>
