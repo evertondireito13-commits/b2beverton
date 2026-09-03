@@ -36,7 +36,6 @@ import {
 import { estagnacao, estagnacaoLabel, ESTAGNACAO_RING, ESTAGNACAO_TONE } from "@/lib/lead-activity";
 import { WhatsAppQuickButton } from "@/components/central/whatsapp-quick";
 import { pipelineMetrics, formatBRL } from "@/lib/pipeline-metrics";
-import { sendRdStationNote } from "@/lib/prospeccao.functions";
 import { mesclarLeadsDuplicados } from "@/lib/leads.functions";
 import { listMeetings } from "@/lib/follow-ups.functions";
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
@@ -131,7 +130,6 @@ export function LeadsCentralPanel() {
   }
 
 
-  const runRd = useServerFn(sendRdStationNote);
   const runListMeetings = useServerFn(listMeetings);
 
   const refresh = useCallback(() => {
@@ -307,10 +305,7 @@ export function LeadsCentralPanel() {
     leads.find((l) => l.id === selectedId) ?? excluidos.find((l) => l.id === selectedId) ?? null;
 
 
-  /**
-   * Atualização otimista: a fase muda na tela na hora; se a sincronização com o
-   * RD Station falhar, avisamos e recarregamos do store (fonte da verdade).
-   */
+  /** Atualização otimista: a fase muda na tela na hora. */
   function notifyRd(lead: Lead, next: LeadStatus, obs: string) {
     setLeads((prev) =>
       prev.map((l) =>
@@ -319,12 +314,6 @@ export function LeadsCentralPanel() {
           : l,
       ),
     );
-    if (!lead.rd_deal_id?.trim()) return;
-    const nota = `[BHM Central] ${lead.empresa} → ${LEAD_STATUS_LABEL[next]}${obs ? `\n${obs}` : ""}`;
-    runRd({ data: { dealId: lead.rd_deal_id, text: nota } }).catch(() => {
-      toast.warning("Fase salva localmente, mas a nota não foi enviada ao RD Station.");
-      refresh();
-    });
   }
 
   const [dragId, setDragId] = useState<string | null>(null);

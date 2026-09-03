@@ -95,7 +95,7 @@ export function saveActivities(list: BhmActivityLog[]) {
  * A UI passa o lead ativo + o resultado marcado + o boolean "falou com decisor".
  * Idempotência opcional: se `extras.dedupeKey` for informado, chamadas
  * subsequentes com a mesma chave no mesmo dia são ignoradas (evita duplicar
- * quando o operador clica em "Enviar ao RD" após já ter salvo pelo checkbox).
+ * após já ter salvo pelo checkbox).
  */
 export function addActivity(
   lead: ActiveLeadLike,

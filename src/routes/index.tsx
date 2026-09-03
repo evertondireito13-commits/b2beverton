@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { generateWithAI, extractContactNameWithAI, lookupCnpj, sendRdStationNote, fetchRdStationDeal, transcribeAudio, searchCompanyByName, enrichPhones, searchRdDeals, searchRdStationDeals, interpretarStatusConversa } from "@/lib/prospeccao.functions";
+import { generateWithAI, extractContactNameWithAI, lookupCnpj, transcribeAudio, searchCompanyByName, enrichPhones, interpretarStatusConversa } from "@/lib/prospeccao.functions";
 import { logCall } from "@/lib/call-logs.functions";
 import { cancelPendingFollowUpsForCompany, createFollowUp, extractFollowUpFromCall, listFollowUps, type FollowUp } from "@/lib/follow-ups.functions";
 import { upsertLead as upsertLeadCentral, isLeadIsolated, findLead, addLeadFollowUp } from "@/lib/leads-store";
@@ -153,12 +153,8 @@ export type SessaoAtivaV2 = {
   empresaResumo?: string | null;
   telefones?: unknown;
   script?: string;
-  dealId?: string;
-  dealName?: string;
-  dossie?: string;
 };
 const SESSAO_ATIVA_BASE = "bhm-sessao-ativa-v2";
-const RD_DEAL_ID_BASE = "rd-deal-id";
 const TOKEN_SAVINGS_BASE = "bhm-token-savings";
 
 
@@ -171,9 +167,6 @@ export function activeConsultorKey(): string {
 }
 function sessaoAtivaKey(): string {
   return `${SESSAO_ATIVA_BASE}::${activeConsultorKey()}`;
-}
-export function rdDealIdKey(): string {
-  return `${RD_DEAL_ID_BASE}::${activeConsultorKey()}`;
 }
 function tokenSavingsKey(): string {
   return `${TOKEN_SAVINGS_BASE}::${activeConsultorKey()}`;
@@ -204,7 +197,6 @@ export function updateSessaoAtiva(patch: SessaoAtivaV2) {
 export function clearSessaoAtiva() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(sessaoAtivaKey());
-  window.localStorage.removeItem(rdDealIdKey());
   clearRascunho();
   window.dispatchEvent(new Event("bhm:sessao-ativa-updated"));
   window.dispatchEvent(new Event("bhm:historico-updated"));
@@ -740,7 +732,7 @@ export function AppHeader({ current: _current }: { current: "pre-or-pos" | "rela
                     variant="outline"
                     size="sm"
                     className="border-gold/40 px-2 text-navy-deep hover:bg-gold/10 sm:px-3"
-                    title="Encerra a sessão do lead atual (CNPJ, telefones, script, negócio do RD e dossiê). Históricos e relatórios permanecem."
+                    title="Encerra a sessão do lead atual (CNPJ, telefones e script). Históricos e relatórios permanecem."
                   >
                     <Trash2 className="h-3.5 w-3.5 sm:mr-1" />
                     <span className="hidden sm:inline">Encerrar sessão do lead</span>
@@ -750,9 +742,8 @@ export function AppHeader({ current: _current }: { current: "pre-or-pos" | "rela
                   <AlertDialogHeader>
                     <AlertDialogTitle>Limpar sessão do lead atual?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Esta ação apaga o CNPJ carregado, dados cadastrais, telefones, script,
-                      negócio vinculado do RD, dossiê e também o áudio gravado/pendente da
-                      chamada. Os históricos salvos e relatórios permanecem intactos.
+                      Esta ação apaga o CNPJ carregado, dados cadastrais, telefones, script
+                      e também o áudio gravado/pendente da chamada. Os históricos salvos e relatórios permanecem intactos.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -800,7 +791,7 @@ export function AppFooter() {
       <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-2 break-words px-3 py-4 text-[10px] font-medium tracking-[0.15em] text-muted-foreground uppercase sm:px-4 md:gap-3 md:px-6 md:tracking-[0.2em] 2xl:max-w-[1680px]">
         <span className="min-w-0 break-all">Curitiba/PR · brunomorais@brunohenriquemorais.adv.br</span>
         <span className="hidden min-w-0 normal-case tracking-normal opacity-70 md:inline">
-          Módulos: Pré · Pós · Relatório · Fontes: BrasilAPI · CNPJá · CNPJ.biz · site · CRM: RD Station · IA: Lovable AI
+          Módulos: Pré · Pós · Relatório · Fontes: BrasilAPI · CNPJá · CNPJ.biz · site · IA: Lovable AI
         </span>
 
       </div>

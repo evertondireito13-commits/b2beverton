@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { extractFinalScriptOnly } from "@/lib/script-output";
-import { generateWithAI, extractContactNameWithAI, lookupCnpj, sendRdStationNote, fetchRdStationDeal, transcribeAudio, searchCompanyByName, enrichPhones, searchRdDeals, searchRdStationDeals, interpretarStatusConversa } from "@/lib/prospeccao.functions";
+import { generateWithAI, extractContactNameWithAI, lookupCnpj, transcribeAudio, searchCompanyByName, enrichPhones, interpretarStatusConversa } from "@/lib/prospeccao.functions";
 import { logCall } from "@/lib/call-logs.functions";
 import { cancelPendingFollowUpsForCompany, createFollowUp, extractFollowUpFromCall, listFollowUps, type FollowUp } from "@/lib/follow-ups.functions";
 import { upsertLead as upsertLeadCentral, isLeadIsolated, findLead, addLeadFollowUp } from "@/lib/leads-store";
@@ -141,7 +141,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 import { CallRecorderButton } from "@/components/call-recorder-button";
-import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, rdDealIdKey } from "@/routes/index";
+import { CopyButton, loadSessaoAtiva, updateSessaoAtiva } from "@/routes/index";
 
 
 /**
@@ -600,7 +600,7 @@ function extrairContatoPrioritario(texto?: string): string | undefined {
     if (nome) return nome;
   }
 
-  // Caso comum em listas coladas do LinkedIn/RD: o nome vem em uma linha,
+  // Caso comum em listas coladas do LinkedIn: o nome vem em uma linha,
   // e o cargo prioritário aparece várias linhas depois como "Cargo:\nAnalista financeiro".
   for (let i = 0; i < linhas.length; i += 1) {
     const linha = linhas[i];
