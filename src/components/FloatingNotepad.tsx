@@ -97,6 +97,7 @@ export default function FloatingNotepad() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bubbleDragged = useRef(false);
+  const labelRefs = useRef<Record<string, HTMLSpanElement | null>>({});
 
   const activeTab = useCallback(
     (s: NotepadState = state) => s.tabs.find((t) => t.id === s.activeTabId) || s.tabs[0],
@@ -183,7 +184,7 @@ export default function FloatingNotepad() {
 
     function onPointerDown(e: PointerEvent) {
       const t = e.target as HTMLElement;
-      if (t.closest(".iconbtn") || t.closest(".closeTab")) return;
+      if (t.closest(".fnp-iconbtn") || t.closest(".fnp-closetab") || t.closest(".fnp-addtab")) return;
       dragging = true;
       moved = false;
       startX = e.clientX;
@@ -242,6 +243,19 @@ export default function FloatingNotepad() {
   useEffect(() => {
     if (editorRef.current) editorRef.current.value = activeTab().content;
   }, [state.activeTabId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------- focus tab label when renaming ----------
+  useEffect(() => {
+    if (!editingTabId) return;
+    const el = labelRefs.current[editingTabId];
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [editingTabId]);
 
   function handleEditorInput() {
     const val = editorRef.current?.value ?? "";
@@ -454,6 +468,9 @@ export default function FloatingNotepad() {
                 onClick={() => setActiveTab(tab.id)}
               >
                 <span
+                  ref={(el) => {
+                    labelRefs.current[tab.id] = el;
+                  }}
                   className="fnp-label"
                   contentEditable={editingTabId === tab.id}
                   suppressContentEditableWarning
