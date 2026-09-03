@@ -824,7 +824,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       return;
     }
     setEnriquecendo(true);
-        let atual = [...list];
+    let atual = [...list];
     let ok = 0;
     let falhas = 0;
     const errosVistos: string[] = [];
