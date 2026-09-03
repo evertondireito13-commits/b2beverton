@@ -575,6 +575,9 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         contato: dados.contato,
         cargo: dados.cargo,
         observacoes: dados.observacoes,
+        uf: dados.uf,
+        setor: dados.setor,
+        regime: dados.regime,
       };
 
       const digitos = cnpjDigitos(dados.cnpj);
@@ -585,7 +588,23 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
 
       if (mesmoCnpj) {
         // Mesma unidade já cadastrada: atualiza em vez de duplicar.
-        persist(list.map((e) => (e.id === mesmoCnpj.id ? { ...e, ...item, id: e.id, status: e.status } : e)));
+        // UF/Setor/Regime nunca são sobrescritos aqui se já tiverem valor —
+        // só o "Enriquecer via CNPJ" ou edição manual mudam isso depois.
+        persist(
+          list.map((e) =>
+            e.id === mesmoCnpj.id
+              ? {
+                  ...e,
+                  ...item,
+                  id: e.id,
+                  status: e.status,
+                  uf: e.uf || item.uf,
+                  setor: e.setor || item.setor,
+                  regime: e.regime || item.regime,
+                }
+              : e,
+          ),
+        );
         toast.success(`Unidade já cadastrada — dados atualizados: ${nome}`);
       } else {
         const raiz = cnpjRaiz(dados.cnpj);
@@ -1728,9 +1747,9 @@ function EditEmpresaDialog({
     setEmail(empresa.email || auto.email || "");
     setObservacoes(empresa.observacoes || auto.observacoes || "");
     setTextoBruto(empresa.textoBruto ?? "");
-    setUf(empresa.uf ?? "");
-    setSetor(empresa.setor ?? "");
-    setRegime(empresa.regime ?? "");
+    setUf(empresa.uf || auto.uf || "");
+    setSetor(empresa.setor || auto.setor || "");
+    setRegime(empresa.regime || auto.regime || "");
   }, [empresa]);
 
   // Ao colar/editar o texto bruto de uma empresa já existente, reprocessa e
@@ -1746,6 +1765,9 @@ function EditEmpresaDialog({
     setTelefone((atual) => atual || auto.telefone || atual);
     setEmail((atual) => atual || auto.email || atual);
     setObservacoes((atual) => atual || auto.observacoes || atual);
+    setUf((atual) => atual || auto.uf || atual);
+    setSetor((atual) => atual || auto.setor || atual);
+    setRegime((atual) => atual || auto.regime || atual);
   }
 
   const open = empresa !== null;
