@@ -835,16 +835,32 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
         if (r.ok) {
           ok += 1;
-          atual = atual.map((e) =>
-            e.id === alvo.id
-              ? {
-                  ...e,
-                  uf: e.uf || r.uf || undefined,
-                  setor: e.setor || r.setor || undefined,
-                  regime: e.regime || r.regime || undefined,
-                }
-              : e,
-          );
+          atual = atual.map((e) => {
+            if (e.id !== alvo.id) return e;
+            // Monta um bloco com o que a Receita devolveu e que não tem
+            // campo próprio no cadastro (situação, natureza, porte, capital,
+            // endereço, sócios) — só entra em Observações se estiver vazia,
+            // pra nunca sobrepor anotação manual sua.
+            const extras = [
+              r.situacaoCadastral ? `Situação cadastral: ${r.situacaoCadastral}` : null,
+              r.naturezaJuridica ? `Natureza jurídica: ${r.naturezaJuridica}` : null,
+              r.porte ? `Porte: ${r.porte}` : null,
+              r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
+              r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
+              r.endereco ? `Endereço: ${r.endereco}` : null,
+              r.socios ? `Sócios: ${r.socios}` : null,
+            ].filter((linha): linha is string => !!linha);
+            return {
+              ...e,
+              uf: e.uf || r.uf || undefined,
+              setor: e.setor || r.setor || undefined,
+              regime: e.regime || r.regime || undefined,
+              telefone: e.telefone || r.telefone || undefined,
+              email: e.email || r.email || undefined,
+              razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
+              observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
+            };
+          });
         } else {
           falhas += 1;
           console.error(`Enriquecimento falhou — ${alvo.nome} (${alvo.cnpj}):`, r.erro);
