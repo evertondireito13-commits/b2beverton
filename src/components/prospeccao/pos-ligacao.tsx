@@ -202,7 +202,6 @@ export function PosLigacao({
   }
 
 
-  const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSecs, setRecordingSecs] = useState(0);
