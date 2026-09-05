@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { generateWithAI, extractContactNameWithAI, lookupCnpj, transcribeAudio, searchCompanyByName, enrichPhones, interpretarStatusConversa } from "@/lib/prospeccao.functions";
+import { generateWithAI, extractContactNameWithAI, lookupCnpj, sendRdStationNote, fetchRdStationDeal, transcribeAudio, searchCompanyByName, enrichPhones, searchRdDeals, searchRdStationDeals, interpretarStatusConversa } from "@/lib/prospeccao.functions";
 import { logCall } from "@/lib/call-logs.functions";
 import { cancelPendingFollowUpsForCompany, createFollowUp, extractFollowUpFromCall, listFollowUps, type FollowUp } from "@/lib/follow-ups.functions";
 import { upsertLead as upsertLeadCentral, isLeadIsolated, findLead, addLeadFollowUp, updateLead as updateLeadCentral } from "@/lib/leads-store";
@@ -147,7 +147,7 @@ import { HistoricoEmpresaSheet } from "@/components/prospeccao/historico-empresa
 
 import { useHotkey } from "@/hooks/use-hotkey";
 
-import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
+import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, rdDealIdKey, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
 import { PromptLibraryPanel, inferirSegmentoPorCnae, montarLeadFallback, preencherTagsDoScript, contemAlucinacaoDeExtracao, compileScriptLocally, parseLeadFromDados, type ActiveLeadData } from "@/components/prospeccao/shared";
 import { extractFinalScriptOnly } from "@/lib/script-output";
 
@@ -189,7 +189,7 @@ export function PreLigacao({
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // "Dirty" flag: vira true assim que o operador edita manualmente a Textarea
-  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI,
+  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI, RD Station,
   // Preparação Noturna, ACTIVE_LEAD_EVENT) NÃO podem sobrescrever o campo.
   const dadosDirtyRef = useRef<boolean>(false);
 
@@ -211,7 +211,7 @@ export function PreLigacao({
       const email = (detail.email ?? "").trim();
       const cnpjDigits = (detail.cnpj ?? "").replace(/\D/g, "");
       // Texto vindo da Preparação Noturna é dado bruto informado pelo operador.
-      // Ele deve ser preservado contra lookup automático durante a compilação.
+      // Ele deve ser preservado contra lookup/RD automático durante a compilação.
       if (texto && !dadosDirtyRef.current) {
         setDados(texto);
         dadosDirtyRef.current = true;
@@ -289,8 +289,11 @@ export function PreLigacao({
     setNomeBusca("");
     setResultados([]);
     setTelefones(null);
+    setRdDeals([]);
+    setSelectedDealId("");
+    setDossie(null);
     updateRascunho({ pre: { cnpj: "", dados: "", script: "", empresaResumo: null, nomeBusca: "" } });
-    updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
+    updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, dealId: "", dealName: "", dossie: "", telefones: null });
   }
 
   function limparTudo() {
@@ -311,24 +314,81 @@ export function PreLigacao({
   const [telefones, setTelefones] = useState<Telefones | null>((sess0.telefones as Telefones | null) ?? null);
   const [loadingFones, setLoadingFones] = useState(false);
 
+  // ---- RD Station: negócios + dossiê do lead ----
+  type RdDeal = { id: string; name: string; organization: string | null; stage: string | null };
+  const [rdDeals, setRdDeals] = useState<RdDeal[]>([]);
+  const [loadingDeals, setLoadingDeals] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<string>(sess0.dealId ?? "");
+
+  // Se a empresa ativa já tem negócio do RD vinculado, mostra sem nova busca.
+  useEffect(() => {
+    if (selectedDealId) return;
+    const nomeLead = currentLeadState?.razaoSocial ?? currentLeadState?.nomeFantasia ?? empresaResumo ?? "";
+    if (!nomeLead && !cnpj) return;
+    const leadCentral = findLead(nomeLead, currentLeadState?.cnpj ?? cnpj ?? null);
+    if (leadCentral?.rd_deal_id) {
+      setSelectedDealId(leadCentral.rd_deal_id);
+      updateSessaoAtiva({ dealId: leadCentral.rd_deal_id });
+      if (typeof window !== "undefined")
+        window.localStorage.setItem(rdDealIdKey(), leadCentral.rd_deal_id);
+    }
+  }, [currentLeadState, empresaResumo, cnpj, selectedDealId]);
+
+
+  const [dossie, setDossie] = useState<string | null>(sess0.dossie ?? null);
+  const [loadingDossie, setLoadingDossie] = useState(false);
+  // Permite abrir a busca de negócio no RD antes de identificar a empresa.
+  const [rdManualOpen, setRdManualOpen] = useState(false);
 
   const runLookup = useServerFn(lookupCnpj);
   const runGenerate = useServerFn(generateWithAI);
   const runExtractContactName = useServerFn(extractContactNameWithAI);
   const runSearchNome = useServerFn(searchCompanyByName);
   const runEnrichPhones = useServerFn(enrichPhones);
+  const runSearchDeals = useServerFn(searchRdDeals);
+  const runSearchDealsByName = useServerFn(searchRdStationDeals);
+  const runFetchDeal = useServerFn(fetchRdStationDeal);
 
   async function extrairNomeContatoComIA(textoBruto: string): Promise<string> {
     const { nome } = await runExtractContactName({ data: { textoBruto } });
     return nome?.trim() || "tudo bem?";
   }
 
+  // ---- Busca ativa por nome no CRM ----
+  type RdDealHit = { id: string; name: string; empresa: string; stage: string };
+  const [dealSearchQuery, setDealSearchQuery] = useState("");
+  const [dealSearchResults, setDealSearchResults] = useState<RdDealHit[]>([]);
+  const [dealSearchLoading, setDealSearchLoading] = useState(false);
+  const [dealSearchOpen, setDealSearchOpen] = useState(false);
+
+  useEffect(() => {
+    const q = dealSearchQuery.trim();
+    if (q.length < 3) {
+      setDealSearchResults([]);
+      setDealSearchLoading(false);
+      return;
+    }
+    setDealSearchLoading(true);
+    const handle = window.setTimeout(async () => {
+      try {
+        const hits = await runSearchDealsByName({ data: { query: q } });
+        setDealSearchResults(hits as RdDealHit[]);
+        setDealSearchOpen(true);
+      } catch {
+        setDealSearchResults([]);
+      } finally {
+        setDealSearchLoading(false);
+      }
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [dealSearchQuery, runSearchDealsByName]);
 
   // ---- Caches em memória ----
   type LookupResult = Awaited<ReturnType<typeof lookupCnpj>>;
   const lookupCache = useRef<Map<string, LookupResult>>(new Map());
   const phonesCache = useRef<Map<string, Telefones>>(new Map());
   const aiCache = useRef<Map<string, string>>(new Map());
+  const dealsCache = useRef<Map<string, RdDeal[]>>(new Map());
 
   // Normaliza nomes de empresa para comparação (sem acentos, sem sufixos societários).
   function normalizarNomeEmpresa(v: string) {
@@ -341,6 +401,88 @@ export function PreLigacao({
       .trim();
   }
 
+  function matchForte(nomeEmpresa: string, deal: RdDeal) {
+    const alvo = normalizarNomeEmpresa(nomeEmpresa);
+    if (!alvo) return false;
+    const cand = normalizarNomeEmpresa(`${deal.name} ${deal.organization ?? ""}`);
+    if (!cand) return false;
+    if (cand.includes(alvo) || alvo.includes(cand)) return true;
+    const tokensAlvo = alvo.split(" ").filter((t) => t.length > 2);
+    if (tokensAlvo.length === 0) return false;
+    const acertos = tokensAlvo.filter((t) => cand.includes(t)).length;
+    return acertos / tokensAlvo.length >= 0.75;
+  }
+
+  async function buscarDealsRD(
+    query: string,
+    opts?: { autoLink?: boolean; nomeEmpresa?: string },
+  ) {
+    const q = query.trim();
+    if (!q) return;
+    const cacheKey = q.toLowerCase();
+    let deals = dealsCache.current.get(cacheKey);
+    if (!deals) {
+      setLoadingDeals(true);
+      try {
+        const r = await runSearchDeals({ data: { query: q } });
+        deals = r.deals;
+        dealsCache.current.set(cacheKey, deals);
+      } catch {
+        return; /* silencioso */
+      } finally {
+        setLoadingDeals(false);
+      }
+    }
+    setRdDeals(deals);
+    if (!opts?.autoLink) {
+      if (deals.length > 0) toast.info(`${deals.length} negócio(s) localizado(s) no RD Station`);
+      return;
+    }
+    // Vínculo automático: 1 resultado, ou 1 único com nome muito parecido.
+    const nome = opts.nomeEmpresa ?? q;
+    const fortes = deals.filter((d) => matchForte(nome, d));
+    const candidato = deals.length === 1 ? deals[0] : fortes.length === 1 ? fortes[0] : null;
+    // Só vincula automaticamente com ID no formato aceito pelo envio ao RD.
+    const escolhido = candidato && /^[a-f0-9]{24}$/i.test(candidato.id) ? candidato : null;
+    if (escolhido) {
+      await handleSelectDeal(escolhido.id, escolhido.name);
+      toast.success(`Negócio no RD vinculado automaticamente: ${escolhido.name}`);
+
+    } else if (deals.length > 1) {
+      toast.info(`${deals.length} negócios no RD — confirme qual é o correto com 1 clique.`);
+    }
+  }
+
+
+  async function handleSelectDeal(id: string, hitName?: string) {
+    setSelectedDealId(id);
+    const found = rdDeals.find((d) => d.id === id);
+    const nameForSess = hitName ?? found?.name ?? dealSearchResults.find((h) => h.id === id)?.name ?? "";
+    updateSessaoAtiva({ dealId: id, dealName: nameForSess });
+    if (typeof window !== "undefined") window.localStorage.setItem(rdDealIdKey(), id);
+    // Vínculo permanente com a empresa: fica salvo no cadastro do lead e é
+    // reaproveitado pela Central de Reuniões e pelas próximas sessões.
+    const nomeLead = currentLeadState?.razaoSocial ?? currentLeadState?.nomeFantasia ?? empresaResumo ?? "";
+    const leadCentral = findLead(nomeLead, currentLeadState?.cnpj ?? cnpj ?? null);
+    if (leadCentral && leadCentral.rd_deal_id !== id) updateLeadCentral(leadCentral.id, { rd_deal_id: id });
+    setLoadingDossie(true);
+    setDossie(null);
+    try {
+      const r = await runFetchDeal({ data: { dealId: id } });
+      const texto = (r as { texto?: string }).texto ?? "";
+      const notFound = (r as { notFound?: boolean }).notFound;
+      const final = notFound || !texto ? "Nenhuma nota ou atividade encontrada para este negócio." : texto;
+      setDossie(final);
+      updateSessaoAtiva({ dossie: final });
+      toast.success("Dossiê do lead carregado");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Falha ao buscar dossiê";
+      setDossie(`Erro ao carregar dossiê: ${msg}`);
+      toast.error(msg);
+    } finally {
+      setLoadingDossie(false);
+    }
+  }
 
 
 
@@ -470,6 +612,14 @@ export function PreLigacao({
       setContingenciaAtiva(false);
       toast.success("Dados carregados. Ajuste o prompt se quiser e depois processe o script.");
 
+      // Dispara em paralelo a busca de negócios no RD (não bloqueia)
+      // Empresa identificada: já procura e vincula o negócio no RD sozinho.
+      if (!selectedDealId)
+        void buscarDealsRD(r.razaoSocial || r.nomeFantasia || digits, {
+          autoLink: true,
+          nomeEmpresa: r.razaoSocial || r.nomeFantasia || "",
+        });
+
 
       // Se já enriquecemos telefones para este CNPJ nesta sessão, restaura do cache.
       const cachedPhones = phonesCache.current.get(digits);
@@ -544,6 +694,8 @@ export function PreLigacao({
     }
     setLoadingBusca(true);
     setResultados([]);
+    // Dispara busca de negócios no RD em paralelo com a busca cadastral
+    void buscarDealsRD(termo);
     try {
       const r = await runSearchNome({ data: { nome: termo } });
       if (r.itens.length === 0) {
@@ -690,7 +842,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       await startCallRecording({ vadTimeoutMs: 45_000 });
       if (!getRunningTimer()) startTimer(nome || "Empresa", currentLeadState?.cnpj ?? cnpj ?? null);
     } catch {
-      /* microfone indisponível: segue com a transcrição manual como fonte */
+      /* microfone indisponível: segue com a transcrição do RD como fonte */
     }
   }
 
@@ -980,7 +1132,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-xs font-semibold">
-                  Telefones da empresa
+                  Telefones para o RD
                   {loadingFones && <Loader2 className="h-3 w-3 animate-spin" />}
                   {telefones && telefones.telefones.length > 0 && (
                     <span className="rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-medium">
@@ -1069,6 +1221,115 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             </div>
           )}
 
+          {!empresaResumo && !rdManualOpen && (
+            <button
+              type="button"
+              onClick={() => setRdManualOpen(true)}
+              className="text-left text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Já sabe o negócio no RD? Buscar
+            </button>
+          )}
+
+          {(empresaResumo || rdManualOpen) && (
+          <div className="rounded-md border border-border bg-muted/30 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-navy-deep">
+                <Link2 className="h-3.5 w-3.5 text-gold" />
+                Buscar negócio no RD Station CRM
+                {(loadingDeals || dealSearchLoading) && <Loader2 className="h-3 w-3 animate-spin" />}
+              </div>
+              {selectedDealId && (
+                <span className="rounded-full bg-gold/20 px-2 py-0.5 text-[10px] font-mono">
+                  {selectedDealId.slice(0, 8)}…
+                </span>
+              )}
+            </div>
+
+            <div className="relative mt-2">
+              <Input
+                value={dealSearchQuery}
+                onChange={(e) => setDealSearchQuery(e.target.value)}
+                onFocus={() => dealSearchResults.length > 0 && setDealSearchOpen(true)}
+                placeholder="Digite o nome do negócio ou empresa (mín. 3 caracteres)..."
+                className="h-9 text-xs"
+              />
+              {dealSearchOpen && dealSearchQuery.trim().length >= 3 && (
+                <div className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-md border border-border bg-background shadow-lg">
+                  {dealSearchLoading && (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground">Buscando no RD Station…</div>
+                  )}
+                  {!dealSearchLoading && dealSearchResults.length === 0 && (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground">Nenhum negócio encontrado.</div>
+                  )}
+                  {!dealSearchLoading && dealSearchResults.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => {
+                        void handleSelectDeal(d.id);
+                        setDealSearchQuery(`${d.name} · ${d.empresa}`);
+                        setDealSearchOpen(false);
+                      }}
+                      className="block w-full px-3 py-2 text-left text-xs hover:bg-muted"
+                    >
+                      <span className="font-medium">{d.name}</span>
+                      <span className="text-muted-foreground"> · {d.empresa}</span>
+                      <span className="text-gold"> ({d.stage})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {rdDeals.length > 0 && (
+              <div className="mt-2">
+                <Label className="text-[11px] text-muted-foreground">
+                  Sugestões automáticas para este lead:
+                </Label>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {rdDeals.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => void handleSelectDeal(d.id)}
+                      className={`rounded border px-2 py-1 text-[11px] transition ${
+                        selectedDealId === d.id
+                          ? "border-gold bg-gold/20 font-semibold"
+                          : "border-border bg-background hover:bg-muted"
+                      }`}
+                    >
+                      {d.name}
+                      {d.organization ? ` · ${d.organization}` : ""}
+                      {d.stage ? ` (${d.stage})` : ""}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(loadingDossie || dossie) && (
+              <Collapsible defaultOpen className="mt-3">
+                <div className="flex items-center justify-between">
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">
+                      Dossiê do Lead (Histórico do RD)
+                      {loadingDossie && <Loader2 className="ml-2 h-3 w-3 animate-spin" />}
+                    </Button>
+                  </CollapsibleTrigger>
+                  {dossie && !loadingDossie && (
+                    <CopyButton text={dossie} label="Copiar dossiê" variant="ghost" />
+                  )}
+                </div>
+                <CollapsibleContent>
+                  <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap rounded border border-border bg-background/60 p-3 text-[11px] leading-relaxed">
+                    {loadingDossie ? "Carregando notas e atividades do RD Station..." : dossie}
+                  </pre>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+          </div>
+          )}
 
         </div>
 
@@ -1103,16 +1364,40 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         </div>
 
 
-        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-foreground">
-              Modo Esteira <span className="text-primary">(Contato por IA)</span>
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {modoEsteira
-                ? "Compila o script a partir do prompt + dados do lead e delega o nome do contato à IA."
-                : "Usa o Lovable AI Gateway para gerar o script (consome créditos)."}
-            </span>
+        <div
+          className={`flex items-center justify-between gap-4 rounded-xl border px-4 py-3.5 transition-colors ${
+            modoEsteira
+              ? "border-primary/30 bg-primary/5"
+              : "border-amber-300/60 bg-amber-50 dark:bg-amber-950/20"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                modoEsteira
+                  ? "bg-primary/15 text-primary"
+                  : "bg-amber-200/60 text-amber-700 dark:text-amber-300"
+              }`}
+            >
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-foreground">
+                Modo Esteira
+                <span
+                  className={`ml-1.5 text-xs font-medium ${
+                    modoEsteira ? "text-primary" : "text-amber-700 dark:text-amber-400"
+                  }`}
+                >
+                  {modoEsteira ? "· Contato por IA" : "· IA Gateway"}
+                </span>
+              </span>
+              <span className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                {modoEsteira
+                  ? "Compila o script a partir do prompt + dados do lead e delega o nome do contato à IA."
+                  : "Usa o Lovable AI Gateway para gerar o script (consome créditos)."}
+              </span>
+            </div>
           </div>
           <Switch
             checked={modoEsteira}
@@ -1125,7 +1410,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           onClick={handleProcessScript}
           disabled={loadingGen}
           size="lg"
-          className="h-12 w-full text-base font-semibold"
+          className="h-12 w-full rounded-xl text-base font-semibold shadow-sm"
         >
           {loadingGen ? (
             <>
