@@ -1605,7 +1605,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         </div>
 
         {/* Barra flutuante de seleção em lote */}
-        {empresasFiltradas.length > 0 && selecionados.length > 0 && (
+        {empresasFiltradas.length > 0 && (
           <div className="sticky bottom-4 z-20 mx-auto flex w-[calc(100%-2rem)] max-w-4xl flex-wrap items-center gap-4 rounded-2xl border border-hub-line bg-hub-raised/95 p-4 shadow-2xl backdrop-blur-xl">
             <div className="flex items-center gap-3 border-r border-hub-line pr-4">
               <span className="text-sm font-bold text-hub-text">
