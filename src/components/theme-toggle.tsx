@@ -1,28 +1,26 @@
 import { useEffect, useState } from "react";
-import { Moon, Sun, Sparkles } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 
-export type ThemeName = "light" | "dark" | "noir";
+export type ThemeName = "light" | "dark";
 
 const STORAGE_KEY = "bhm:theme";
 
 export function applyTheme(theme: ThemeName) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.classList.remove("dark", "noir");
+  root.classList.remove("dark");
   if (theme === "dark") root.classList.add("dark");
-  if (theme === "noir") root.classList.add("noir");
 }
 
 export function getStoredTheme(): ThemeName {
-  if (typeof window === "undefined") return "noir";
+  if (typeof window === "undefined") return "dark";
   const v = window.localStorage.getItem(STORAGE_KEY);
-  return v === "dark" || v === "noir" || v === "light" ? v : "noir";
+  return v === "dark" || v === "light" ? v : "dark";
 }
 
 const OPTIONS: { value: ThemeName; label: string; icon: typeof Sun }[] = [
   { value: "light", label: "Clara", icon: Sun },
   { value: "dark", label: "Escura", icon: Moon },
-  { value: "noir", label: "Dark", icon: Sparkles },
 ];
 
 export function ThemeToggle() {
