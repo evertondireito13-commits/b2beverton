@@ -462,7 +462,12 @@ export default function FloatingNotepad() {
               <span>Bloco de Notas</span>
             </div>
             <span className="fnp-savestate">{saveState}</span>
-            <button className="fnp-iconbtn" title="Recolher" onClick={() => setOpen(false)}>
+            <button
+              className="fnp-iconbtn"
+              title="Recolher"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setOpen(false)}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M5 12h14" />
               </svg>
