@@ -1159,436 +1159,449 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </div>
         </div>
 
-        {/* Prateleira de pastas */}
-        <div className="flex gap-3 overflow-x-auto border-b border-hub-line/50 px-6 py-5 [scrollbar-width:thin]">
-          <button
-            type="button"
-            onClick={() => setDate(todayISO())}
-            title="Voltar para a lista por data"
-            className={
-              "flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border-2 transition " +
-              (!isPastaBucket(date)
-                ? "border-hub-gold bg-hub-gold/10"
-                : "border-hub-line/60 bg-hub-surface hover:border-hub-muted/50")
-            }
-          >
-            <div
-              className={
-                "mb-2.5 grid h-9 w-9 place-items-center rounded-xl transition " +
-                (!isPastaBucket(date) ? "bg-hub-gold text-hub-gold-ink shadow-md" : "bg-hub-raised text-hub-muted")
-              }
-            >
-              <CalendarDays className="h-5 w-5" />
-            </div>
-            <span className={"px-2 text-center text-xs font-bold " + (!isPastaBucket(date) ? "text-hub-gold" : "text-hub-text")}>
-              Lista do dia
-            </span>
-            <span className="mt-0.5 text-[10px] font-medium text-hub-muted">por data</span>
-          </button>
-
-          {pastas.map((p) => {
-            const bucket = `pasta:${p.id}`;
-            const ativa = date === bucket;
-            const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
-            return (
-              <div
-                key={p.id}
+        <div className="flex flex-col md:flex-row">
+          {/* Coluna lateral — Pastas */}
+          <aside className="shrink-0 border-b border-hub-line/50 p-3 md:w-60 md:border-b-0 md:border-r">
+            <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+              Pastas
+            </p>
+            <div className="max-h-[420px] space-y-1 overflow-y-auto pr-1 md:max-h-[560px]">
+              <button
+                type="button"
+                onClick={() => setDate(todayISO())}
+                title="Voltar para a lista por data"
                 className={
-                  "group relative flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border transition " +
-                  (ativa
+                  "flex w-full items-center gap-2.5 rounded-xl border-2 px-3 py-2.5 text-left transition " +
+                  (!isPastaBucket(date)
                     ? "border-hub-gold bg-hub-gold/10"
-                    : "border-hub-line/60 bg-hub-surface hover:border-hub-muted/50")
+                    : "border-transparent hover:bg-hub-surface")
                 }
               >
-                <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
-                  <button
-                    type="button"
-                    onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
-                    className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                    title="Renomear pasta"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => excluirPasta(p.id)}
-                    className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
-                    title="Excluir pasta"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDate(bucket)}
-                  title="Trabalhar esta pasta"
-                  className="flex h-full w-full flex-col items-center justify-center"
+                <span
+                  className={
+                    "grid h-8 w-8 shrink-0 place-items-center rounded-lg " +
+                    (!isPastaBucket(date) ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                  }
                 >
+                  <CalendarDays className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={"block truncate text-xs font-bold " + (!isPastaBucket(date) ? "text-hub-gold" : "text-hub-text")}>
+                    Lista do dia
+                  </span>
+                  <span className="block text-[10px] font-medium text-hub-muted">por data</span>
+                </span>
+              </button>
+
+              {pastas.map((p) => {
+                const bucket = `pasta:${p.id}`;
+                const ativa = date === bucket;
+                const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
+                return (
                   <div
+                    key={p.id}
                     className={
-                      "mb-2.5 grid h-9 w-9 place-items-center rounded-xl " +
-                      (ativa ? "bg-hub-gold text-hub-gold-ink shadow-md" : "bg-hub-raised text-hub-muted")
+                      "group relative rounded-xl border-2 transition " +
+                      (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
                     }
                   >
-                    <GripVertical className="hidden" />
-                    <Save className="hidden" />
-                    <Moon className="hidden" />
-                    <span className="font-hub text-sm font-bold">{qtd}</span>
-                  </div>
-                  <span className={"line-clamp-2 px-2 text-center text-xs font-bold leading-tight " + (ativa ? "text-hub-gold" : "text-hub-text")}>
-                    {p.nome}
-                  </span>
-                  <span className="mt-0.5 text-[10px] font-medium text-hub-muted">
-                    {qtd} empresa(s)
-                  </span>
-                </button>
-              </div>
-            );
-          })}
-
-          <button
-            type="button"
-            onClick={() => setPastaDialog({ nome: "" })}
-            className="flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-hub-line text-hub-muted transition hover:border-hub-gold/60 hover:bg-hub-gold/5 hover:text-hub-gold"
-          >
-            <Plus className="mb-2 h-6 w-6" />
-            <span className="text-[10px] font-bold uppercase tracking-wider">Nova pasta</span>
-          </button>
-        </div>
-
-        {/* Abas + contexto da pasta */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hub-line/50 px-6">
-          <div className="flex gap-6">
-            <button
-              type="button"
-              onClick={() => setAba("ativas")}
-              className={
-                "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
-                (aba === "ativas"
-                  ? "border-hub-gold text-hub-text"
-                  : "border-transparent text-hub-muted hover:text-hub-text")
-              }
-            >
-              FILA ATIVA ({ativas.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setAba("sem_interesse")}
-              className={
-                "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
-                (aba === "sem_interesse"
-                  ? "border-rose-400 text-rose-300"
-                  : "border-transparent text-hub-muted hover:text-hub-text")
-              }
-            >
-              SEM INTERESSE / REABORDAGEM ({semInteresse.length})
-            </button>
-          </div>
-          {pastaAtual && (
-            <div
-              className="mb-1 flex items-center gap-1.5 rounded-full bg-hub-gold/10 px-3 py-1 text-[11px] font-bold text-hub-gold"
-              title="As empresas da pasta não se misturam com as listas por data — use a seleção em lote para enviá-las a um dia específico."
-            >
-              Pasta: {pastaAtual.nome}
-            </div>
-          )}
-        </div>
-
-        {/* Filtros */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
-          <div className="relative min-w-[220px] flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-hub-muted" />
-            <input
-              value={filtroBusca}
-              onChange={(ev) => setFiltroBusca(ev.target.value)}
-              placeholder="Buscar por Razão Social ou CNPJ..."
-              className="w-full rounded-xl border border-hub-line/60 bg-hub-surface py-2.5 pl-10 pr-4 text-sm text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
-            />
-          </div>
-          <select
-            value={filtroStatus}
-            onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
-            title="Filtrar por status"
-            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-          >
-            <option value="">Todas</option>
-            <option value="pending">Pendentes</option>
-            <option value="realizada">Realizadas</option>
-            <option value="sem_interesse">Sem interesse</option>
-          </select>
-          <select
-            value={filtroUf}
-            onChange={(ev) => setFiltroUf(ev.target.value)}
-            title="Filtrar por UF"
-            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-          >
-            <option value="">Todas UF</option>
-            {ufsDisponiveis.map((uf) => (
-              <option key={uf} value={uf}>{uf}</option>
-            ))}
-          </select>
-          <select
-            value={filtroSetor}
-            onChange={(ev) => setFiltroSetor(ev.target.value)}
-            title="Filtrar por setor"
-            className="max-w-[180px] rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-          >
-            <option value="">Todos os setores</option>
-            {setoresDisponiveis.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <select
-            value={filtroRegime}
-            onChange={(ev) => setFiltroRegime(ev.target.value)}
-            title="Filtrar por regime tributário"
-            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-          >
-            <option value="">Todos os regimes</option>
-            {REGIMES.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-            <option value="nao_informado">Não informado</option>
-          </select>
-          {filtrosAtivos && (
-            <button
-              type="button"
-              onClick={limparFiltros}
-              className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
-            >
-              Limpar filtros
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={enriquecendo}
-            onClick={() => void enriquecerCnpjs()}
-            title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
-            className="ml-auto flex items-center gap-2 rounded-xl bg-hub-raised px-4 py-2.5 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
-          >
-            {enriquecendo ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4 text-hub-gold" />
-            )}
-            {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
-          </button>
-        </div>
-
-        {/* Lista */}
-        <div className="px-6 pb-6 pt-4">
-          <div className="flex items-center justify-between pb-3">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
-              {empresasFiltradas.length} empresa(s)
-            </span>
-            {empresasFiltradas.length > 0 && (
-              <div className="flex items-center gap-3 text-[11px] font-semibold text-hub-muted">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelecionados(
-                      selecionados.length === empresasFiltradas.length
-                        ? []
-                        : empresasFiltradas.map((x) => x.id),
-                    )
-                  }
-                  className="hover:text-hub-gold"
-                >
-                  Selecionar todas
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelecionados(
-                      empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
-                    )
-                  }
-                  className="hover:text-hub-gold"
-                >
-                  Só pendentes
-                </button>
-              </div>
-            )}
-          </div>
-
-          {empresasOrdenadas.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-16 text-center text-sm text-hub-muted">
-              {aba === "sem_interesse"
-                ? "Nenhuma empresa marcada como sem interesse aqui."
-                : pastaAtual
-                  ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
-                  : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
-            </div>
-          ) : empresasFiltradas.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-10 text-center text-sm text-hub-muted">
-              Nenhuma empresa corresponde aos filtros.{" "}
-              <button type="button" onClick={limparFiltros} className="font-medium text-hub-gold underline">
-                Limpar filtros
-              </button>
-            </div>
-          ) : (
-            <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
-              <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
-                <ul className="space-y-2.5 pb-24">
-                  {empresasFiltradas.map((e) => {
-                    const recusado = e.status === "sem_interesse";
-                    const done = e.status === "realizada";
-                    const unidades = unidadesDoGrupo(e);
-                    const meta: string[] = [];
-                    if (unidadeLabel(e.cnpj)) meta.push(unidadeLabel(e.cnpj)!);
-                    if (e.telefone) meta.push(e.telefone);
-                    if (e.contato) meta.push(e.cargo ? `${e.contato} (${e.cargo})` : e.contato);
-                    if (e.email) meta.push(e.email);
-                    const selecionado = selecionados.includes(e.id);
-                    return (
-                      <SortableEmpresaRow
-                        key={e.id}
-                        id={e.id}
+                    <button
+                      type="button"
+                      onClick={() => setDate(bucket)}
+                      title="Trabalhar esta pasta"
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 pr-12 text-left"
+                    >
+                      <span
                         className={
-                          "group flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3.5 transition " +
-                          (recusado
-                            ? "border-rose-400/20 bg-rose-400/5"
-                            : done
-                              ? "border-emerald-400/20 bg-emerald-400/5"
-                              : selecionado
-                                ? "border-hub-gold/50 bg-hub-gold/5"
-                                : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
+                          "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
+                          (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
                         }
                       >
-                        <input
-                          type="checkbox"
-                          checked={selecionado}
-                          onChange={() => toggleSelecionado(e.id)}
-                          className="h-4 w-4 shrink-0 accent-[#e8c15a]"
-                          title="Selecionar para mover em lote"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <button
-                            type="button"
-                            onClick={() => setEditingEmpresa(e)}
+                        {qtd}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={
+                            "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
+                          }
+                        >
+                          {p.nome}
+                        </span>
+                        <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
+                      </span>
+                    </button>
+                    <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
+                        className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                        title="Renomear pasta"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => excluirPasta(p.id)}
+                        className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                        title="Excluir pasta"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setPastaDialog({ nome: "" })}
+                className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-hub-line px-3 py-2.5 text-left text-hub-muted transition hover:border-hub-gold/60 hover:bg-hub-gold/5 hover:text-hub-gold"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg">
+                  <Plus className="h-4 w-4" />
+                </span>
+                <span className="text-xs font-bold uppercase tracking-wider">Nova pasta</span>
+              </button>
+            </div>
+          </aside>
+
+          {/* Coluna principal — abas, filtros e lista */}
+          <div className="min-w-0 flex-1">
+            {/* Abas + contexto da pasta */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hub-line/50 px-6">
+              <div className="flex gap-6">
+                <button
+                  type="button"
+                  onClick={() => setAba("ativas")}
+                  className={
+                    "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                    (aba === "ativas"
+                      ? "border-hub-gold text-hub-text"
+                      : "border-transparent text-hub-muted hover:text-hub-text")
+                  }
+                >
+                  FILA ATIVA ({ativas.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAba("sem_interesse")}
+                  className={
+                    "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                    (aba === "sem_interesse"
+                      ? "border-rose-400 text-rose-300"
+                      : "border-transparent text-hub-muted hover:text-hub-text")
+                  }
+                >
+                  SEM INTERESSE / REABORDAGEM ({semInteresse.length})
+                </button>
+              </div>
+              {pastaAtual && (
+                <div
+                  className="mb-1 flex items-center gap-1.5 rounded-full bg-hub-gold/10 px-3 py-1 text-[11px] font-bold text-hub-gold"
+                  title="As empresas da pasta não se misturam com as listas por data — use a seleção em lote para enviá-las a um dia específico."
+                >
+                  Pasta: {pastaAtual.nome}
+                </div>
+              )}
+            </div>
+
+            {/* Filtros */}
+            <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
+              <div className="relative min-w-[220px] flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-hub-muted" />
+                <input
+                  value={filtroBusca}
+                  onChange={(ev) => setFiltroBusca(ev.target.value)}
+                  placeholder="Buscar por Razão Social ou CNPJ..."
+                  className="w-full rounded-xl border border-hub-line/60 bg-hub-surface py-2.5 pl-10 pr-4 text-sm text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
+                />
+              </div>
+              <select
+                value={filtroStatus}
+                onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
+                title="Filtrar por status"
+                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
+              >
+                <option value="">Todas</option>
+                <option value="pending">Pendentes</option>
+                <option value="realizada">Realizadas</option>
+                <option value="sem_interesse">Sem interesse</option>
+              </select>
+              <select
+                value={filtroUf}
+                onChange={(ev) => setFiltroUf(ev.target.value)}
+                title="Filtrar por UF"
+                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
+              >
+                <option value="">Todas UF</option>
+                {ufsDisponiveis.map((uf) => (
+                  <option key={uf} value={uf}>{uf}</option>
+                ))}
+              </select>
+              <select
+                value={filtroSetor}
+                onChange={(ev) => setFiltroSetor(ev.target.value)}
+                title="Filtrar por setor"
+                className="max-w-[180px] rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
+              >
+                <option value="">Todos os setores</option>
+                {setoresDisponiveis.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <select
+                value={filtroRegime}
+                onChange={(ev) => setFiltroRegime(ev.target.value)}
+                title="Filtrar por regime tributário"
+                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
+              >
+                <option value="">Todos os regimes</option>
+                {REGIMES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+                <option value="nao_informado">Não informado</option>
+              </select>
+              {filtrosAtivos && (
+                <button
+                  type="button"
+                  onClick={limparFiltros}
+                  className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
+                >
+                  Limpar filtros
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={enriquecendo}
+                onClick={() => void enriquecerCnpjs()}
+                title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+                className="ml-auto flex items-center gap-2 rounded-xl bg-hub-raised px-4 py-2.5 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
+              >
+                {enriquecendo ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4 text-hub-gold" />
+                )}
+                {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+              </button>
+            </div>
+
+            {/* Lista */}
+            <div className="px-6 pb-6 pt-4">
+              <div className="flex items-center justify-between pb-3">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                  {empresasFiltradas.length} empresa(s)
+                </span>
+                {empresasFiltradas.length > 0 && (
+                  <div className="flex items-center gap-3 text-[11px] font-semibold text-hub-muted">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelecionados(
+                          selecionados.length === empresasFiltradas.length
+                            ? []
+                            : empresasFiltradas.map((x) => x.id),
+                        )
+                      }
+                      className="hover:text-hub-gold"
+                    >
+                      Selecionar todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelecionados(
+                          empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
+                        )
+                      }
+                      className="hover:text-hub-gold"
+                    >
+                      Só pendentes
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {empresasOrdenadas.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-16 text-center text-sm text-hub-muted">
+                  {aba === "sem_interesse"
+                    ? "Nenhuma empresa marcada como sem interesse aqui."
+                    : pastaAtual
+                      ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
+                      : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
+                </div>
+              ) : empresasFiltradas.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-10 text-center text-sm text-hub-muted">
+                  Nenhuma empresa corresponde aos filtros.{" "}
+                  <button type="button" onClick={limparFiltros} className="font-medium text-hub-gold underline">
+                    Limpar filtros
+                  </button>
+                </div>
+              ) : (
+                <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
+                  <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+                    <ul className="space-y-2.5 pb-24">
+                      {empresasFiltradas.map((e) => {
+                        const recusado = e.status === "sem_interesse";
+                        const done = e.status === "realizada";
+                        const unidades = unidadesDoGrupo(e);
+                        const meta: string[] = [];
+                        if (unidadeLabel(e.cnpj)) meta.push(unidadeLabel(e.cnpj)!);
+                        if (e.telefone) meta.push(e.telefone);
+                        if (e.contato) meta.push(e.cargo ? `${e.contato} (${e.cargo})` : e.contato);
+                        if (e.email) meta.push(e.email);
+                        const selecionado = selecionados.includes(e.id);
+                        return (
+                          <SortableEmpresaRow
+                            key={e.id}
+                            id={e.id}
                             className={
-                              "block max-w-full truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
-                              (recusado ? "text-rose-300" : done ? "text-emerald-300" : "text-hub-text")
-                            }
-                            title="Abrir e editar dados"
-                          >
-                            {e.nome}
-                          </button>
-                          <p className="mt-0.5 truncate font-mono text-[11px] tracking-tight text-hub-muted">
-                            {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
-                            {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
-                          </p>
-                        </div>
-                        {unidades.length > 1 && (
-                          <span
-                            className="shrink-0 rounded-full bg-hub-gold/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
-                            title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
-                          >
-                            Grupo · {unidades.length}
-                          </span>
-                        )}
-                        {e.setor && (
-                          <span
-                            className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
-                            title={e.setor}
-                          >
-                            {e.setor}
-                          </span>
-                        )}
-                        {e.uf && (
-                          <span className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted" title="UF">
-                            {e.uf}
-                          </span>
-                        )}
-                        {e.regime && (
-                          <span className="hidden shrink-0 text-[11px] font-medium text-hub-muted lg:inline" title="Regime tributário">
-                            {e.regime}
-                          </span>
-                        )}
-                        {recusado ? (
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
-                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
-                            Sem interesse
-                          </span>
-                        ) : done ? (
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
-                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                            Realizada
-                          </span>
-                        ) : (
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
-                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
-                            Pendente
-                          </span>
-                        )}
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <Button
-                            size="sm"
-                            onClick={() => enviarParaPre(e)}
-                            className={
-                              "h-8 gap-1 rounded-lg text-[11px] font-bold " +
+                              "group flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3.5 transition " +
                               (recusado
-                                ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                ? "border-rose-400/20 bg-rose-400/5"
                                 : done
-                                  ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
-                                  : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
-                            }
-                            title={
-                              recusado
-                                ? "Sem interesse — reabordagem futura"
-                                : done
-                                  ? "Já ligada hoje — clique para ligar novamente"
-                                  : "Enviar ao Pré-ligação"
+                                  ? "border-emerald-400/20 bg-emerald-400/5"
+                                  : selecionado
+                                    ? "border-hub-gold/50 bg-hub-gold/5"
+                                    : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
                             }
                           >
-                            {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                            {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
-                            {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setEditingEmpresa(e)}
-                            className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                            title="Editar"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button size="sm" variant="ghost" className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text" title="Mudar data">
-                                <CalendarDays className="h-3.5 w-3.5" />
+                            <input
+                              type="checkbox"
+                              checked={selecionado}
+                              onChange={() => toggleSelecionado(e.id)}
+                              className="h-4 w-4 shrink-0 accent-[#e8c15a]"
+                              title="Selecionar para mover em lote"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingEmpresa(e)}
+                                className={
+                                  "block max-w-full truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
+                                  (recusado ? "text-rose-300" : done ? "text-emerald-300" : "text-hub-text")
+                                }
+                                title="Abrir e editar dados"
+                              >
+                                {e.nome}
+                              </button>
+                              <p className="mt-0.5 truncate font-mono text-[11px] tracking-tight text-hub-muted">
+                                {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
+                                {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
+                              </p>
+                            </div>
+                            {unidades.length > 1 && (
+                              <span
+                                className="shrink-0 rounded-full bg-hub-gold/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
+                                title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
+                              >
+                                Grupo · {unidades.length}
+                              </span>
+                            )}
+                            {e.setor && (
+                              <span
+                                className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
+                                title={e.setor}
+                              >
+                                {e.setor}
+                              </span>
+                            )}
+                            {e.uf && (
+                              <span className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted" title="UF">
+                                {e.uf}
+                              </span>
+                            )}
+                            {e.regime && (
+                              <span className="hidden shrink-0 text-[11px] font-medium text-hub-muted lg:inline" title="Regime tributário">
+                                {e.regime}
+                              </span>
+                            )}
+                            {recusado ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
+                                Sem interesse
+                              </span>
+                            ) : done ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                Realizada
+                              </span>
+                            ) : (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                Pendente
+                              </span>
+                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                onClick={() => enviarParaPre(e)}
+                                className={
+                                  "h-8 gap-1 rounded-lg text-[11px] font-bold " +
+                                  (recusado
+                                    ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                    : done
+                                      ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                      : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
+                                }
+                                title={
+                                  recusado
+                                    ? "Sem interesse — reabordagem futura"
+                                    : done
+                                      ? "Já ligada hoje — clique para ligar novamente"
+                                      : "Enviar ao Pré-ligação"
+                                }
+                              >
+                                {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                                {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
+                                {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
                               </Button>
-                            </PopoverTrigger>
-                            <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
-                              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
-                                Mover para outro dia
-                              </div>
-                              <Input
-                                type="date"
-                                defaultValue={date}
-                                onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
-                                className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
-                              />
-                            </PopoverContent>
-                          </Popover>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => removeEmpresa(e.id)}
-                            className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
-                            title="Excluir"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </SortableEmpresaRow>
-                    );
-                  })}
-                </ul>
-              </SortableContext>
-            </DndContext>
-          )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingEmpresa(e)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                                title="Editar"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button size="sm" variant="ghost" className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text" title="Mudar data">
+                                    <CalendarDays className="h-3.5 w-3.5" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
+                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
+                                    Mover para outro dia
+                                  </div>
+                                  <Input
+                                    type="date"
+                                    defaultValue={date}
+                                    onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
+                                    className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removeEmpresa(e.id)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                                title="Excluir"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </SortableEmpresaRow>
+                        );
+                      })}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Barra flutuante de seleção em lote */}
