@@ -1082,88 +1082,129 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
 
   if (variant === "full") {
     return (
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-navy-deep/15 bg-card p-4 shadow-card">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-navy-deep">
+      <div className="font-hub-body overflow-hidden rounded-3xl border border-hub-line/60 bg-hub-bg text-hub-text shadow-2xl">
+        {/* Header */}
+        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-hub-line/50 p-6 pb-5">
+          <div className="min-w-0">
+            <h1 className="font-hub flex items-center gap-2.5 text-2xl font-bold tracking-tight text-hub-text">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-hub-gold/15 text-hub-gold">
                 <Moon className="h-5 w-5" />
-                Preparação Noturna
-              </h1>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Planeje as empresas do dia. Clique em uma para revisar e enviar direto ao Pré-ligação.
-              </p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="rounded-md border border-border/60 bg-muted/40 px-2 py-1">
-                  Pendentes: <b className="text-navy-deep">{pendentes}</b>
-                </span>
-                <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-emerald-800">
-                  Realizadas: <b>{realizadas}</b>
-                </span>
-                <span className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-red-700">
-                  Sem interesse: <b>{semInteresse.length}</b>
-                </span>
-              </div>
-              <Input
+              </span>
+              Preparação Noturna
+            </h1>
+            <p className="mt-1 text-sm font-medium text-hub-muted">
+              Gerencie sua prospecção estratégica e organize o fluxo do dia.
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2.5">
+            <div className="flex items-center gap-1 rounded-lg bg-hub-surface p-1">
+              <button
+                type="button"
+                onClick={() => setDate(todayISO())}
+                className={
+                  "rounded-md px-3.5 py-1.5 text-xs font-semibold transition " +
+                  (!isPastaBucket(date) && date === todayISO()
+                    ? "bg-hub-raised text-hub-text shadow-sm"
+                    : "text-hub-muted hover:text-hub-text")
+                }
+              >
+                Hoje
+              </button>
+              <input
                 type="date"
                 value={isPastaBucket(date) ? "" : date}
                 onChange={(e) => setDate(e.target.value || todayISO())}
-                className="h-8 w-[140px] shrink-0 text-xs"
                 title="Lista do dia"
+                className="w-[130px] bg-transparent pr-1 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
               />
+            </div>
+            <Button
+              onClick={() => setDraftOpen(true)}
+              className="gap-2 rounded-xl bg-hub-gold px-4 py-2 text-sm font-bold text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar Empresa
+            </Button>
+          </div>
+        </header>
 
-              <Button
-                size="sm"
-                onClick={() => setDraftOpen(true)}
-                className="h-8 gap-1 bg-navy-deep text-white hover:bg-navy-deep/90"
-              >
-                <Plus className="h-4 w-4" />
-                <span className="text-xs font-semibold">Cadastrar Empresa</span>
-              </Button>
+        {/* Métricas */}
+        <div className="grid grid-cols-3 gap-4 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400/10 text-amber-300">
+              <Loader2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Pendentes</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{pendentes}</p>
             </div>
           </div>
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">
+              <Check className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Realizadas</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{realizadas}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-400/10 text-rose-300">
+              <X className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Sem interesse</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{semInteresse.length}</p>
+            </div>
+          </div>
+        </div>
 
-          {/* Pastas (carteiras): segmentos, cidades, campanhas… */}
-          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-3">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              Pastas
-            </span>
-            <button
-              type="button"
-              onClick={() => setDate(todayISO())}
+        {/* Prateleira de pastas */}
+        <div className="flex gap-3 overflow-x-auto border-b border-hub-line/50 px-6 py-5 [scrollbar-width:thin]">
+          <button
+            type="button"
+            onClick={() => setDate(todayISO())}
+            title="Voltar para a lista por data"
+            className={
+              "flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border-2 transition " +
+              (!isPastaBucket(date)
+                ? "border-hub-gold bg-hub-gold/10"
+                : "border-hub-line/60 bg-hub-surface hover:border-hub-muted/50")
+            }
+          >
+            <div
               className={
-                "rounded-full px-3 py-1 text-[11px] font-semibold transition " +
-                (!isPastaBucket(date)
-                  ? "bg-navy-deep text-white"
-                  : "border border-border/60 bg-card text-muted-foreground hover:text-navy-deep")
+                "mb-2.5 grid h-9 w-9 place-items-center rounded-xl transition " +
+                (!isPastaBucket(date) ? "bg-hub-gold text-hub-gold-ink shadow-md" : "bg-hub-raised text-hub-muted")
               }
-              title="Voltar para a lista por data"
             >
-              📅 Lista do dia
-            </button>
-            {pastas.map((p) => {
-              const bucket = `pasta:${p.id}`;
-              const ativa = date === bucket;
-              const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
-              return (
-                <span
-                  key={p.id}
-                  className={
-                    "group inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition " +
-                    (ativa
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border/60 bg-card text-muted-foreground hover:text-navy-deep")
-                  }
-                >
-                  <button type="button" onClick={() => setDate(bucket)} title="Trabalhar esta pasta">
-                    📁 {p.nome} · {qtd}
-                  </button>
+              <CalendarDays className="h-5 w-5" />
+            </div>
+            <span className={"px-2 text-center text-xs font-bold " + (!isPastaBucket(date) ? "text-hub-gold" : "text-hub-text")}>
+              Lista do dia
+            </span>
+            <span className="mt-0.5 text-[10px] font-medium text-hub-muted">por data</span>
+          </button>
+
+          {pastas.map((p) => {
+            const bucket = `pasta:${p.id}`;
+            const ativa = date === bucket;
+            const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
+            return (
+              <div
+                key={p.id}
+                className={
+                  "group relative flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border transition " +
+                  (ativa
+                    ? "border-hub-gold bg-hub-gold/10"
+                    : "border-hub-line/60 bg-hub-surface hover:border-hub-muted/50")
+                }
+              >
+                <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
                   <button
                     type="button"
                     onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
-                    className="opacity-60 hover:opacity-100"
+                    className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
                     title="Renomear pasta"
                   >
                     <Pencil className="h-3 w-3" />
@@ -1171,76 +1212,104 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   <button
                     type="button"
                     onClick={() => excluirPasta(p.id)}
-                    className="opacity-60 hover:opacity-100"
+                    className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
                     title="Excluir pasta"
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
-                </span>
-              );
-            })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDate(bucket)}
+                  title="Trabalhar esta pasta"
+                  className="flex h-full w-full flex-col items-center justify-center"
+                >
+                  <div
+                    className={
+                      "mb-2.5 grid h-9 w-9 place-items-center rounded-xl " +
+                      (ativa ? "bg-hub-gold text-hub-gold-ink shadow-md" : "bg-hub-raised text-hub-muted")
+                    }
+                  >
+                    <GripVertical className="hidden" />
+                    <Save className="hidden" />
+                    <Moon className="hidden" />
+                    <span className="font-hub text-sm font-bold">{qtd}</span>
+                  </div>
+                  <span className={"line-clamp-2 px-2 text-center text-xs font-bold leading-tight " + (ativa ? "text-hub-gold" : "text-hub-text")}>
+                    {p.nome}
+                  </span>
+                  <span className="mt-0.5 text-[10px] font-medium text-hub-muted">
+                    {qtd} empresa(s)
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => setPastaDialog({ nome: "" })}
+            className="flex h-28 w-32 shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-hub-line text-hub-muted transition hover:border-hub-gold/60 hover:bg-hub-gold/5 hover:text-hub-gold"
+          >
+            <Plus className="mb-2 h-6 w-6" />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Nova pasta</span>
+          </button>
+        </div>
+
+        {/* Abas + contexto da pasta */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hub-line/50 px-6">
+          <div className="flex gap-6">
             <button
               type="button"
-              onClick={() => setPastaDialog({ nome: "" })}
-              className="inline-flex items-center gap-1 rounded-full border border-dashed border-primary/50 px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/5"
+              onClick={() => setAba("ativas")}
+              className={
+                "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                (aba === "ativas"
+                  ? "border-hub-gold text-hub-text"
+                  : "border-transparent text-hub-muted hover:text-hub-text")
+              }
             >
-              <Plus className="h-3 w-3" />
-              Nova pasta
+              FILA ATIVA ({ativas.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setAba("sem_interesse")}
+              className={
+                "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                (aba === "sem_interesse"
+                  ? "border-rose-400 text-rose-300"
+                  : "border-transparent text-hub-muted hover:text-hub-text")
+              }
+            >
+              SEM INTERESSE / REABORDAGEM ({semInteresse.length})
             </button>
           </div>
           {pastaAtual && (
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Trabalhando a pasta <b className="text-navy-deep">{pastaAtual.nome}</b>. As empresas
-              daqui não se misturam com as listas por data — use a seleção em lote para enviá-las a
-              um dia específico.
-            </p>
+            <div
+              className="mb-1 flex items-center gap-1.5 rounded-full bg-hub-gold/10 px-3 py-1 text-[11px] font-bold text-hub-gold"
+              title="As empresas da pasta não se misturam com as listas por data — use a seleção em lote para enviá-las a um dia específico."
+            >
+              Pasta: {pastaAtual.nome}
+            </div>
           )}
         </div>
 
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setAba("ativas")}
-            className={
-              "rounded-full px-3 py-1 text-[11px] font-semibold transition " +
-              (aba === "ativas"
-                ? "bg-navy-deep text-white"
-                : "border border-border/60 bg-white text-muted-foreground hover:text-navy-deep")
-            }
-          >
-            Fila ativa ({ativas.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setAba("sem_interesse")}
-            className={
-              "rounded-full px-3 py-1 text-[11px] font-semibold transition " +
-              (aba === "sem_interesse"
-                ? "bg-red-600 text-white"
-                : "border border-border/60 bg-white text-muted-foreground hover:text-red-600")
-            }
-          >
-            🔴 Sem interesse / Reabordagem ({semInteresse.length})
-          </button>
-        </div>
-
-        {/* Barra de filtros — estilo Balcão de Negócios */}
-        <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-navy-deep/15 bg-card px-3 py-2 shadow-card">
-          <div className="relative min-w-[200px] flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
+        {/* Filtros */}
+        <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-hub-muted" />
+            <input
               value={filtroBusca}
               onChange={(ev) => setFiltroBusca(ev.target.value)}
-              placeholder="Razão social ou CNPJ…"
-              className="h-8 pl-8 text-xs"
+              placeholder="Buscar por Razão Social ou CNPJ..."
+              className="w-full rounded-xl border border-hub-line/60 bg-hub-surface py-2.5 pl-10 pr-4 text-sm text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
             />
           </div>
           <select
             value={filtroStatus}
             onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
-            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
             title="Filtrar por status"
+            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
           >
             <option value="">Todas</option>
             <option value="pending">Pendentes</option>
@@ -1250,8 +1319,8 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           <select
             value={filtroUf}
             onChange={(ev) => setFiltroUf(ev.target.value)}
-            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
             title="Filtrar por UF"
+            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
           >
             <option value="">Todas UF</option>
             {ufsDisponiveis.map((uf) => (
@@ -1261,8 +1330,8 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           <select
             value={filtroSetor}
             onChange={(ev) => setFiltroSetor(ev.target.value)}
-            className="h-8 max-w-[180px] rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
             title="Filtrar por setor"
+            className="max-w-[180px] rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
           >
             <option value="">Todos os setores</option>
             {setoresDisponiveis.map((s) => (
@@ -1272,8 +1341,8 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           <select
             value={filtroRegime}
             onChange={(ev) => setFiltroRegime(ev.target.value)}
-            className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
             title="Filtrar por regime tributário"
+            className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
           >
             <option value="">Todos os regimes</option>
             {REGIMES.map((r) => (
@@ -1285,74 +1354,263 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             <button
               type="button"
               onClick={limparFiltros}
-              className="text-[11px] font-medium text-muted-foreground underline hover:text-navy-deep"
+              className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
             >
               Limpar filtros
             </button>
           )}
-          <span className="rounded-md bg-navy-deep/10 px-2 py-1 text-[11px] font-semibold text-navy-deep">
-            {empresasFiltradas.length} empresa(s)
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
+          <button
+            type="button"
             disabled={enriquecendo}
             onClick={() => void enriquecerCnpjs()}
-            className="h-8 gap-1 text-[11px] font-semibold"
             title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+            className="ml-auto flex items-center gap-2 rounded-xl bg-hub-raised px-4 py-2.5 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
           >
             {enriquecendo ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Sparkles className="h-3.5 w-3.5" />
+              <Sparkles className="h-4 w-4 text-hub-gold" />
             )}
             {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
-          </Button>
+          </button>
         </div>
 
-        {empresasFiltradas.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-deep/15 bg-muted/30 px-3 py-2">
-            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-navy-deep">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-[var(--color-navy-deep,#1e293b)]"
-                checked={
-                  selecionados.length > 0 && selecionados.length === empresasFiltradas.length
-                }
-                onChange={(ev) =>
-                  setSelecionados(ev.target.checked ? empresasFiltradas.map((x) => x.id) : [])
-                }
-              />
-              Selecionar todas
-            </label>
-            <button
-              type="button"
-              onClick={() =>
-                setSelecionados(
-                  empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
-                )
-              }
-              className="rounded-md border border-border/60 bg-white px-2 py-1 text-[11px] font-semibold text-muted-foreground hover:text-navy-deep"
-            >
-              Só pendentes
-            </button>
-            <span className="rounded-md bg-navy-deep/10 px-2 py-1 text-[11px] font-semibold text-navy-deep">
-              {selecionados.length} selecionada(s)
+        {/* Lista */}
+        <div className="px-6 pb-6 pt-4">
+          <div className="flex items-center justify-between pb-3">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+              {empresasFiltradas.length} empresa(s)
             </span>
-            {selecionados.length > 0 && (
+            {empresasFiltradas.length > 0 && (
+              <div className="flex items-center gap-3 text-[11px] font-semibold text-hub-muted">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelecionados(
+                      selecionados.length === empresasFiltradas.length
+                        ? []
+                        : empresasFiltradas.map((x) => x.id),
+                    )
+                  }
+                  className="hover:text-hub-gold"
+                >
+                  Selecionar todas
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelecionados(
+                      empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
+                    )
+                  }
+                  className="hover:text-hub-gold"
+                >
+                  Só pendentes
+                </button>
+              </div>
+            )}
+          </div>
+
+          {empresasOrdenadas.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-16 text-center text-sm text-hub-muted">
+              {aba === "sem_interesse"
+                ? "Nenhuma empresa marcada como sem interesse aqui."
+                : pastaAtual
+                  ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
+                  : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
+            </div>
+          ) : empresasFiltradas.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-10 text-center text-sm text-hub-muted">
+              Nenhuma empresa corresponde aos filtros.{" "}
+              <button type="button" onClick={limparFiltros} className="font-medium text-hub-gold underline">
+                Limpar filtros
+              </button>
+            </div>
+          ) : (
+            <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
+              <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+                <ul className="space-y-2.5 pb-24">
+                  {empresasFiltradas.map((e) => {
+                    const recusado = e.status === "sem_interesse";
+                    const done = e.status === "realizada";
+                    const unidades = unidadesDoGrupo(e);
+                    const meta: string[] = [];
+                    if (unidadeLabel(e.cnpj)) meta.push(unidadeLabel(e.cnpj)!);
+                    if (e.telefone) meta.push(e.telefone);
+                    if (e.contato) meta.push(e.cargo ? `${e.contato} (${e.cargo})` : e.contato);
+                    if (e.email) meta.push(e.email);
+                    const selecionado = selecionados.includes(e.id);
+                    return (
+                      <SortableEmpresaRow
+                        key={e.id}
+                        id={e.id}
+                        className={
+                          "group flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3.5 transition " +
+                          (recusado
+                            ? "border-rose-400/20 bg-rose-400/5"
+                            : done
+                              ? "border-emerald-400/20 bg-emerald-400/5"
+                              : selecionado
+                                ? "border-hub-gold/50 bg-hub-gold/5"
+                                : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selecionado}
+                          onChange={() => toggleSelecionado(e.id)}
+                          className="h-4 w-4 shrink-0 accent-[#e8c15a]"
+                          title="Selecionar para mover em lote"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingEmpresa(e)}
+                            className={
+                              "block max-w-full truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
+                              (recusado ? "text-rose-300" : done ? "text-emerald-300" : "text-hub-text")
+                            }
+                            title="Abrir e editar dados"
+                          >
+                            {e.nome}
+                          </button>
+                          <p className="mt-0.5 truncate font-mono text-[11px] tracking-tight text-hub-muted">
+                            {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
+                            {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
+                          </p>
+                        </div>
+                        {unidades.length > 1 && (
+                          <span
+                            className="shrink-0 rounded-full bg-hub-gold/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
+                            title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
+                          >
+                            Grupo · {unidades.length}
+                          </span>
+                        )}
+                        {e.setor && (
+                          <span
+                            className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
+                            title={e.setor}
+                          >
+                            {e.setor}
+                          </span>
+                        )}
+                        {e.uf && (
+                          <span className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted" title="UF">
+                            {e.uf}
+                          </span>
+                        )}
+                        {e.regime && (
+                          <span className="hidden shrink-0 text-[11px] font-medium text-hub-muted lg:inline" title="Regime tributário">
+                            {e.regime}
+                          </span>
+                        )}
+                        {recusado ? (
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
+                            Sem interesse
+                          </span>
+                        ) : done ? (
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            Realizada
+                          </span>
+                        ) : (
+                          <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
+                            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+                            Pendente
+                          </span>
+                        )}
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            onClick={() => enviarParaPre(e)}
+                            className={
+                              "h-8 gap-1 rounded-lg text-[11px] font-bold " +
+                              (recusado
+                                ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                : done
+                                  ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                  : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
+                            }
+                            title={
+                              recusado
+                                ? "Sem interesse — reabordagem futura"
+                                : done
+                                  ? "Já ligada hoje — clique para ligar novamente"
+                                  : "Enviar ao Pré-ligação"
+                            }
+                          >
+                            {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                            {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
+                            {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditingEmpresa(e)}
+                            className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                            title="Editar"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button size="sm" variant="ghost" className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text" title="Mudar data">
+                                <CalendarDays className="h-3.5 w-3.5" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
+                              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
+                                Mover para outro dia
+                              </div>
+                              <Input
+                                type="date"
+                                defaultValue={date}
+                                onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
+                                className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
+                              />
+                            </PopoverContent>
+                          </Popover>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => removeEmpresa(e.id)}
+                            className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                            title="Excluir"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </SortableEmpresaRow>
+                    );
+                  })}
+                </ul>
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+
+        {/* Barra flutuante de seleção em lote */}
+        {empresasFiltradas.length > 0 && selecionados.length > 0 && (
+          <div className="sticky bottom-4 z-20 mx-auto flex w-[calc(100%-2rem)] max-w-4xl flex-wrap items-center gap-4 rounded-2xl border border-hub-line bg-hub-raised/95 p-4 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-center gap-3 border-r border-hub-line pr-4">
+              <span className="text-sm font-bold text-hub-text">
+                {selecionados.length} selecionada(s)
+              </span>
               <button
                 type="button"
                 onClick={() => setSelecionados([])}
-                className="text-[11px] text-muted-foreground underline hover:text-navy-deep"
+                className="rounded-md bg-hub-surface px-2.5 py-1 text-[10px] font-bold uppercase tracking-tight text-hub-muted hover:text-hub-text"
               >
-                limpar
+                Limpar
               </button>
-            )}
-            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            </div>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <select
                 value={bulkMode}
                 onChange={(ev) => setBulkMode(ev.target.value as "copiar" | "mover")}
-                className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+                className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
               >
                 <option value="copiar">Copiar (mantém aqui)</option>
                 <option value="mover">Mover (remove daqui)</option>
@@ -1363,10 +1621,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   setBulkPasta(ev.target.value);
                   if (ev.target.value) setBulkDate("");
                 }}
-                className="h-8 rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
                 title="Enviar para uma pasta"
+                className="max-w-[200px] rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
               >
-                <option value="">Destino: data ▸</option>
+                <option value="">Destino: pasta…</option>
                 {pastas
                   .filter((p) => `pasta:${p.id}` !== date)
                   .map((p) => (
@@ -1375,198 +1633,25 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                     </option>
                   ))}
               </select>
-              <Input
+              <input
                 type="date"
                 value={bulkDate}
                 onChange={(ev) => {
                   setBulkDate(ev.target.value);
                   if (ev.target.value) setBulkPasta("");
                 }}
-                className="h-8 w-[150px] text-[11px]"
+                title="Destino: data"
+                className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
               />
-              <Button
-                size="sm"
-                disabled={selecionados.length === 0}
-                onClick={moverSelecionados}
-                className="h-8 gap-1 bg-navy-deep text-[11px] font-semibold text-white hover:bg-navy-deep/90"
-              >
-                <CalendarDays className="h-3.5 w-3.5" />
-                Enviar
-              </Button>
             </div>
+            <Button
+              onClick={moverSelecionados}
+              className="gap-2 rounded-xl bg-hub-gold px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Enviar
+            </Button>
           </div>
-        )}
-
-        {empresasOrdenadas.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-16 text-center text-sm text-muted-foreground">
-            {aba === "sem_interesse"
-              ? "Nenhuma empresa marcada como sem interesse aqui."
-              : pastaAtual
-                ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
-                : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
-          </div>
-
-        ) : empresasFiltradas.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
-            Nenhuma empresa corresponde aos filtros.{" "}
-            <button type="button" onClick={limparFiltros} className="font-medium text-primary underline">
-              Limpar filtros
-            </button>
-          </div>
-        ) : null}
-        {empresasFiltradas.length > 0 && (
-          <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
-          <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
-          <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-white shadow-card">
-            {empresasFiltradas.map((e) => {
-              const recusado = e.status === "sem_interesse";
-              const done = e.status === "realizada";
-              const unidades = unidadesDoGrupo(e);
-              const meta: string[] = [];
-              if (e.cnpj) meta.push(`CNPJ ${e.cnpj}`);
-              if (unidadeLabel(e.cnpj)) meta.push(unidadeLabel(e.cnpj)!);
-              if (e.telefone) meta.push(e.telefone);
-              if (e.contato) meta.push(e.cargo ? `${e.contato} (${e.cargo})` : e.contato);
-              if (e.email) meta.push(e.email);
-              return (
-                <SortableEmpresaRow
-                  key={e.id}
-                  id={e.id}
-                  className={
-                    "group flex flex-wrap items-center gap-2 px-3 py-2.5 transition " +
-                    (recusado ? "bg-red-500/5" : done ? "bg-emerald-500/5" : "hover:bg-primary/5")
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    checked={selecionados.includes(e.id)}
-                    onChange={() => toggleSelecionado(e.id)}
-                    className="h-3.5 w-3.5 shrink-0 accent-[var(--color-navy-deep,#1e293b)]"
-                    title="Selecionar para mover em lote"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setEditingEmpresa(e)}
-                    className={
-                      "min-w-0 flex-1 truncate text-left text-sm font-semibold hover:underline " +
-                      (recusado ? "text-red-700" : done ? "text-emerald-800" : "text-navy-deep")
-                    }
-                    title="Abrir e editar dados"
-                  >
-                    {recusado ? (
-                      <X className="mr-1 inline h-3.5 w-3.5 text-red-600" />
-                    ) : done ? (
-                      <Check className="mr-1 inline h-3.5 w-3.5 text-emerald-700" />
-                    ) : null}
-                    {e.nome}
-                  </button>
-                  {unidades.length > 1 && (
-                    <span
-                      className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary"
-                      title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
-                    >
-                      Grupo · {unidades.length} unidades
-                    </span>
-                  )}
-                  {recusado ? (
-                    <span className="shrink-0 rounded-full bg-red-600/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-700">
-                      Sem interesse / Descartado
-                    </span>
-                  ) : done ? (
-                    <span className="shrink-0 rounded-full bg-emerald-600/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-                      Ligado / Em andamento
-                    </span>
-                  ) : null}
-                  {e.uf && (
-                    <span
-                      className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-600"
-                      title="UF"
-                    >
-                      {e.uf}
-                    </span>
-                  )}
-                  {e.setor && (
-                    <span
-                      className="hidden shrink-0 max-w-[140px] truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 sm:inline-block"
-                      title={e.setor}
-                    >
-                      {e.setor}
-                    </span>
-                  )}
-                  {meta.length > 0 && (
-                    <span className="hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground md:inline">
-                      {meta.join(" · ")}
-                    </span>
-                  )}
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant={done || recusado ? "outline" : "default"}
-                      onClick={() => enviarParaPre(e)}
-                      className={
-                        "h-8 gap-1 text-[11px] font-semibold " +
-                        (recusado
-                          ? "border-red-600/40 bg-red-50 text-red-700 hover:bg-red-100"
-                          : done
-                            ? "border-emerald-600/40 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                            : "bg-navy-deep text-white hover:bg-navy-deep/90")
-                      }
-                      title={
-                        recusado
-                          ? "Sem interesse — reabordagem futura"
-                          : done
-                            ? "Já ligada hoje — clique para ligar novamente"
-                            : "Enviar ao Pré-ligação"
-                      }
-                    >
-                      {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                      {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
-                      {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setEditingEmpresa(e)}
-                      className="h-8 gap-1 text-[11px]"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Editar
-                    </Button>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-muted-foreground hover:text-navy-deep" title="Mudar data">
-                          <CalendarDays className="h-3.5 w-3.5" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="w-auto p-2">
-                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Mover para outro dia
-                        </div>
-                        <Input
-                          type="date"
-                          defaultValue={date}
-                          onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
-                          className="h-8 w-[150px] text-[11px]"
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeEmpresa(e.id)}
-                      className="h-8 w-8 p-0 text-muted-foreground hover:bg-red-50 hover:text-red-600"
-                      title="Excluir"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </SortableEmpresaRow>
-              );
-            })}
-          </ul>
-          </SortableContext>
-          </DndContext>
-
         )}
 
         {cadastroDialog}
