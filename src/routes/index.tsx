@@ -365,7 +365,9 @@ function CentralProspeccao() {
  * Shell global compartilhado por TODAS as abas.
  * - Header sticky no topo.
  * - Coluna lateral fixa (lg:sticky) com as métricas globais (Volume, Decisor,
- *   Retenção, Pipeline) — visíveis em qualquer aba.
+ *   Retenção, Pipeline) — visíveis em qualquer aba, EXCETO na Preparação
+ *   Noturna, onde a barra lateral fica escondida para dar mais espaço à fila
+ *   de empresas.
  * - Coluna principal com a barra de abas + conteúdo da rota.
  * - Footer padrão.
  */
@@ -397,22 +399,31 @@ export function AppShell({
     current === "relatorio" || current === "diario" || current === "estrategia"
       ? "relatorio"
       : "pre-or-pos";
+  const showSidebar = current !== "preparacao";
   return (
     <div className="relative min-h-screen bg-background text-foreground">
       <Toaster richColors position="top-right" />
       <AppHeader current={headerCurrent} />
       <CommandPalette />
       <main className="mx-auto w-full max-w-7xl px-3 pt-4 pb-16 sm:px-4 md:px-6 md:pt-6 2xl:max-w-[1680px]">
-        <div className="grid grid-cols-1 gap-4 md:gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
-          <MobileSidebarToggle />
-          <aside
-            data-app-sidebar
-            className="hidden space-y-4 lg:sticky lg:top-20 lg:block lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1"
-          >
-            <AppNav current={current} onSelect={onSelect} />
-
-
-          </aside>
+        <div
+          className={
+            showSidebar
+              ? "grid grid-cols-1 gap-4 md:gap-5 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]"
+              : "grid grid-cols-1 gap-4 md:gap-5"
+          }
+        >
+          {showSidebar && (
+            <>
+              <MobileSidebarToggle />
+              <aside
+                data-app-sidebar
+                className="hidden space-y-4 lg:sticky lg:top-20 lg:block lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1"
+              >
+                <AppNav current={current} onSelect={onSelect} />
+              </aside>
+            </>
+          )}
           <section className="min-w-0 space-y-4 md:space-y-5">
             <div className="min-w-0">{children}</div>
           </section>
