@@ -183,12 +183,6 @@
 }
 
 
-/* Realce dos painéis no tema escuro */
-.dark [class*="bg-card"]:hover {
-  border-color: color-mix(in oklab, var(--lime) 45%, transparent);
-}
-
-
 /* Legibilidade: utilitários "navy" herdados do tema claro no tema escuro */
 .dark [class*="text-navy-deep"] {
   color: var(--color-card-foreground);
@@ -510,3 +504,100 @@
 .dark :is([class~="border-lime-100"], [class*="border-lime-100/"], [class~="border-lime-200"], [class*="border-lime-200/"], [class~="border-lime-300"], [class*="border-lime-300/"]) {
   border-color: color-mix(in oklab, var(--color-lime-500) 38%, transparent) !important;
 }
+
+/* =====================================================================
+   Efeitos "tech": brilho, luz e textura — aplicados globalmente em cima
+   das classes que já existem em todo o app (botões, cards), sem precisar
+   editar componente por componente. Pensado pra não cansar quem usa o
+   painel o dia inteiro: brilho forte só em hover/clique, nada pisca sem
+   parar na tela.
+   ===================================================================== */
+
+/* Textura sutil de "grade de circuito" no fundo do tema escuro */
+.dark body {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--lime) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--lime) 6%, transparent) 1px, transparent 1px),
+    radial-gradient(60rem 40rem at 12% -10%, color-mix(in oklab, var(--primary) 10%, transparent), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 0%, color-mix(in oklab, var(--lime) 8%, transparent), transparent 60%);
+  background-size: 42px 42px, 42px 42px, 100% 100%, 100% 100%;
+  background-attachment: fixed;
+}
+
+/* Brilho + varredura de luz em botões primários (CTA) — só ao passar o mouse */
+:is(button, a, [role="button"])[class~="bg-primary"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition: box-shadow 0.25s ease, transform 0.15s ease;
+}
+
+:is(button, a, [role="button"])[class~="bg-primary"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 35%, color-mix(in oklab, white 55%, transparent) 50%, transparent 65%);
+  transform: translateX(-140%);
+  transition: transform 0.7s ease;
+  pointer-events: none;
+}
+
+:is(button, a, [role="button"])[class~="bg-primary"]:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 45%, transparent),
+    0 0 22px -2px color-mix(in oklab, var(--primary) 55%, transparent);
+}
+
+:is(button, a, [role="button"])[class~="bg-primary"]:hover:not(:disabled)::after {
+  transform: translateX(140%);
+}
+
+/* Brilho sutil nos cards ao passar o mouse — reforça a sensação de painel "vivo" */
+:is([class*="bg-card"]):hover {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.dark [class*="bg-card"]:hover {
+  border-color: color-mix(in oklab, var(--lime) 45%, transparent);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 1px color-mix(in oklab, var(--lime) 20%, transparent),
+    0 0 24px -10px color-mix(in oklab, var(--lime) 45%, transparent);
+}
+
+:root [class*="bg-card"]:hover {
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 1px color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+/* Ponto de status "ao vivo" — pra usar em indicadores de conexão/atividade.
+   Classe utilitária opcional: adicionar class="status-live" num elemento
+   pequeno (bolinha) pra dar o efeito de "sistema ativo" pulsando devagar. */
+.status-live {
+  position: relative;
+  background-color: var(--lime);
+}
+
+.status-live::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background-color: var(--lime);
+  opacity: 0.55;
+  animation: status-live-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes status-live-ping {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.55;
+  }
+  75%,
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
