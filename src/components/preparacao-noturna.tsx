@@ -40,9 +40,9 @@ import {
   type EtapaPipeline,
 } from "@/lib/pipeline-preparacao";
 import { scoreEmpresas } from "@/lib/lead-score";
-import { empresaKey } from "@/lib/historico-store";
+
 import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
-import { getSessionConsultor, getConsultor } from "@/lib/historico-store";
+import { getSessionConsultor, getConsultor, empresaKey } from "@/lib/historico-store";
 import {
   parseDadosCnpj,
   cnpjDigitos,
