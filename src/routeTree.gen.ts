@@ -18,6 +18,7 @@ import { Route as PainelRouteImport } from './routes/painel'
 import { Route as FollowupRouteImport } from './routes/followup'
 import { Route as EstrategiaRouteImport } from './routes/estrategia'
 import { Route as EmpresasRouteImport } from './routes/empresas'
+import { Route as DescobrirRouteImport } from './routes/descobrir'
 import { Route as ComissaoRouteImport } from './routes/comissao'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
@@ -67,6 +68,11 @@ const EmpresasRoute = EmpresasRouteImport.update({
   path: '/empresas',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DescobrirRoute = DescobrirRouteImport.update({
+  id: '/descobrir',
+  path: '/descobrir',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ComissaoRoute = ComissaoRouteImport.update({
   id: '/comissao',
   path: '/comissao',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/comissao': typeof ComissaoRoute
+  '/descobrir': typeof DescobrirRoute
   '/empresas': typeof EmpresasRoute
   '/estrategia': typeof EstrategiaRoute
   '/followup': typeof FollowupRoute
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/comissao': typeof ComissaoRoute
+  '/descobrir': typeof DescobrirRoute
   '/empresas': typeof EmpresasRoute
   '/estrategia': typeof EstrategiaRoute
   '/followup': typeof FollowupRoute
@@ -116,6 +124,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/comissao': typeof ComissaoRoute
+  '/descobrir': typeof DescobrirRoute
   '/empresas': typeof EmpresasRoute
   '/estrategia': typeof EstrategiaRoute
   '/followup': typeof FollowupRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/comissao'
+    | '/descobrir'
     | '/empresas'
     | '/estrategia'
     | '/followup'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/comissao'
+    | '/descobrir'
     | '/empresas'
     | '/estrategia'
     | '/followup'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/comissao'
+    | '/descobrir'
     | '/empresas'
     | '/estrategia'
     | '/followup'
@@ -175,6 +187,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgendaRoute: typeof AgendaRoute
   ComissaoRoute: typeof ComissaoRoute
+  DescobrirRoute: typeof DescobrirRoute
   EmpresasRoute: typeof EmpresasRoute
   EstrategiaRoute: typeof EstrategiaRoute
   FollowupRoute: typeof FollowupRoute
@@ -251,6 +264,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmpresasRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/descobrir': {
+      id: '/descobrir'
+      path: '/descobrir'
+      fullPath: '/descobrir'
+      preLoaderRoute: typeof DescobrirRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/comissao': {
       id: '/comissao'
       path: '/comissao'
@@ -279,6 +299,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgendaRoute: AgendaRoute,
   ComissaoRoute: ComissaoRoute,
+  DescobrirRoute: DescobrirRoute,
   EmpresasRoute: EmpresasRoute,
   EstrategiaRoute: EstrategiaRoute,
   FollowupRoute: FollowupRoute,
