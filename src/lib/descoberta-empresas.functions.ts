@@ -28,6 +28,71 @@ export function interpretarConsulta(texto: string): { tipo: string; cidade: stri
   return { tipo, cidade };
 }
 
+/** Remove acentos, deixa minúsculo e tira um "s" final simples (singulariza). */
+function normalizar(texto: string): string {
+  const semAcento = texto
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return semAcento.replace(/s$/, "");
+}
+
+/**
+ * Dicionário: termo comum em português (já normalizado/singular) -> filtro(s)
+ * de tag do OpenStreetMap. Isso é o que faltava: sem isso, a busca só
+ * encontrava empresas cujo NOME continha a palavra digitada, o que quase
+ * nunca acontece (uma metalúrgica raramente se chama "Metalúrgica" no mapa).
+ */
+const TIPO_TAGS: Record<string, string[]> = {
+  metalurgica: ['["craft"="metal_construction"]', '["industrial"="metal"]'],
+  serralheria: ['["craft"="metal_construction"]'],
+  transportadora: ['["office"="logistics"]', '["amenity"="freight_terminal"]'],
+  advocacia: ['["office"="lawyer"]'],
+  escritoriodeadvocacia: ['["office"="lawyer"]'],
+  contabilidade: ['["office"="accountant"]'],
+  contador: ['["office"="accountant"]'],
+  grafica: ['["shop"="printing"]', '["craft"="printer"]'],
+  industria: ['["landuse"="industrial"]', '["building"="industrial"]'],
+  fabrica: ['["landuse"="industrial"]', '["building"="industrial"]'],
+  oficinamecanica: ['["shop"="car_repair"]'],
+  oficina: ['["shop"="car_repair"]'],
+  imobiliaria: ['["office"="estate_agent"]'],
+  seguradora: ['["office"="insurance"]'],
+  farmacia: ['["amenity"="pharmacy"]'],
+  restaurante: ['["amenity"="restaurant"]'],
+  hotel: ['["tourism"="hotel"]'],
+  pousada: ['["tourism"="guest_house"]'],
+  padaria: ['["shop"="bakery"]'],
+  supermercado: ['["shop"="supermarket"]'],
+  mercado: ['["shop"="supermarket"]', '["shop"="convenience"]'],
+  postodegasolina: ['["amenity"="fuel"]'],
+  posto: ['["amenity"="fuel"]'],
+  clinica: ['["amenity"="clinic"]'],
+  clinicamedica: ['["amenity"="clinic"]'],
+  hospital: ['["amenity"="hospital"]'],
+  escola: ['["amenity"="school"]'],
+  academia: ['["leisure"="fitness_centre"]'],
+  salaodebeleza: ['["shop"="hairdresser"]'],
+  salao: ['["shop"="hairdresser"]'],
+  lojaderoupas: ['["shop"="clothes"]'],
+  materiaisdeconstrucao: ['["shop"="hardware"]', '["shop"="doityourself"]'],
+  marcenaria: ['["craft"="carpenter"]'],
+  eletricista: ['["craft"="electrician"]'],
+  transportes: ['["office"="logistics"]'],
+  logistica: ['["office"="logistics"]'],
+  consultoria: ['["office"="consulting"]'],
+  arquitetura: ['["office"="architect"]'],
+  engenharia: ['["office"="engineer"]'],
+  ti: ['["office"="it"]'],
+  tecnologia: ['["office"="it"]'],
+  software: ['["office"="it"]'],
+};
+
+function tagsParaTipo(tipo: string): string[] {
+  const chave = normalizar(tipo).replace(/\s+/g, "");
+  return TIPO_TAGS[chave] ?? [];
+}
+
 type Bbox = { south: number; north: number; west: number; east: number };
 
 async function geocodarCidade(cidade: string): Promise<Bbox | null> {
@@ -61,14 +126,30 @@ function enderecoDe(tags: Record<string, string> | undefined): string | undefine
   return partes.length ? partes.join(", ") : undefined;
 }
 
-async function buscarNoOverpass(tipo: string, bbox: Bbox, limite: number): Promise<EmpresaDescoberta[]> {
-  const bboxStr = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
-  const termoEscapado = tipo.replace(/["\\]/g, "");
-  const query = `[out:json][timeout:25];(
-    node["name"~"${termoEscapado}",i](${bboxStr});
-    way["name"~"${termoEscapado}",i](${bboxStr});
-  );out center ${Math.min(Math.max(limite, 1), 60)};`;
+function elementoParaEmpresa(el: {
+  lat?: number;
+  lon?: number;
+  center?: { lat: number; lon: number };
+  tags?: Record<string, string>;
+}): EmpresaDescoberta | null {
+  const nome = el.tags?.name;
+  if (!nome) return null;
+  const lat = el.lat ?? el.center?.lat;
+  const lon = el.lon ?? el.center?.lon;
+  if (lat === undefined || lon === undefined) return null;
+  return {
+    nome,
+    telefone: firstTag(el.tags, "contact:phone", "phone"),
+    endereco: enderecoDe(el.tags),
+    cidade: el.tags?.["addr:city"],
+    lat,
+    lon,
+  };
+}
 
+async function rodarOverpass(query: string): Promise<
+  Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>
+> {
   const r = await fetch("https://overpass-api.de/api/interpreter", {
     method: "POST",
     headers: { "Content-Type": "text/plain", "User-Agent": USER_AGENT },
@@ -76,30 +157,52 @@ async function buscarNoOverpass(tipo: string, bbox: Bbox, limite: number): Promi
   });
   if (!r.ok) throw new Error(`Overpass respondeu ${r.status}`);
   const data = (await r.json()) as {
-    elements: Array<{
-      type: string;
-      lat?: number;
-      lon?: number;
-      center?: { lat: number; lon: number };
-      tags?: Record<string, string>;
-    }>;
+    elements: Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
   };
+  return data.elements ?? [];
+}
 
+async function buscarNoOverpass(tipo: string, bbox: Bbox, limite: number): Promise<EmpresaDescoberta[]> {
+  const bboxStr = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+  const limiteSeguro = Math.min(Math.max(limite, 1), 60);
+  const tagsConhecidas = tagsParaTipo(tipo);
+
+  // Termo pra busca por NOME: usa a forma singular (sem "s" final) pra achar
+  // "Metalúrgica Fulano" mesmo quando o usuário digitou "metalúrgicas".
+  const termoSingular = tipo.trim().replace(/s(\s|$)/i, "$1").trim();
+  const termoEscapado = termoSingular.replace(/["\\]/g, "");
+
+  const blocos: string[] = [];
+
+  // 1) Busca pela TAG certa (quando conhecemos o tipo de negócio).
+  for (const tag of tagsConhecidas) {
+    blocos.push(`node${tag}(${bboxStr});`, `way${tag}(${bboxStr});`);
+  }
+
+  // 2) Busca por NOME (sempre roda, como rede de segurança — pega empresas
+  //    que por acaso têm o termo no nome, mesmo sem tag mapeada).
+  if (termoEscapado) {
+    blocos.push(
+      `node["name"~"${termoEscapado}",i](${bboxStr});`,
+      `way["name"~"${termoEscapado}",i](${bboxStr});`,
+    );
+  }
+
+  if (blocos.length === 0) return [];
+
+  const query = `[out:json][timeout:25];(${blocos.join("")});out center ${limiteSeguro * 2};`;
+  const elementos = await rodarOverpass(query);
+
+  const vistos = new Set<string>();
   const resultados: EmpresaDescoberta[] = [];
-  for (const el of data.elements ?? []) {
-    const nome = el.tags?.name;
-    if (!nome) continue;
-    const lat = el.lat ?? el.center?.lat;
-    const lon = el.lon ?? el.center?.lon;
-    if (lat === undefined || lon === undefined) continue;
-    resultados.push({
-      nome,
-      telefone: firstTag(el.tags, "contact:phone", "phone"),
-      endereco: enderecoDe(el.tags),
-      cidade: el.tags?.["addr:city"],
-      lat,
-      lon,
-    });
+  for (const el of elementos) {
+    const empresa = elementoParaEmpresa(el);
+    if (!empresa) continue;
+    const chave = `${empresa.nome}|${empresa.lat.toFixed(5)}|${empresa.lon.toFixed(5)}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    resultados.push(empresa);
+    if (resultados.length >= limiteSeguro) break;
   }
   return resultados;
 }
