@@ -1358,6 +1358,46 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               )}
             </div>
 
+            {/* Esteira: Descobrir → Validar → Enriquecer → Pontuar */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-hub-line/50 bg-hub-surface/20 px-6 py-3">
+              <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                Esteira
+              </span>
+              {ETAPAS.map((etapa, i) => {
+                const ativo = filtroEtapa === etapa.id;
+                return (
+                  <div key={etapa.id} className="flex items-center gap-2">
+                    {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-hub-muted/60" />}
+                    <button
+                      type="button"
+                      title={etapa.ajuda}
+                      onClick={() => setFiltroEtapa(ativo ? "" : etapa.id)}
+                      className={
+                        "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] font-bold transition " +
+                        (ativo
+                          ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
+                      }
+                    >
+                      {etapa.label}
+                      <span className="rounded-full bg-hub-raised px-2 py-0.5 text-[10px] text-hub-text">
+                        {etapaContagem[etapa.id]}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+              {filtroEtapa && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroEtapa("")}
+                  className="text-[11px] font-medium text-hub-muted underline hover:text-hub-gold"
+                >
+                  Ver todas as etapas
+                </button>
+              )}
+            </div>
+
             {/* Filtros */}
             <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
               <div className="relative min-w-[220px] flex-1">
@@ -1551,6 +1591,28 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                                 Grupo · {unidades.length}
                               </span>
                             )}
+                            {(() => {
+                              const sc = scoreDaEmpresa(e);
+                              const etapa = etapaDaEmpresa(e, sc);
+                              return (
+                                <>
+                                  <span
+                                    className="shrink-0 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-muted"
+                                    title="Etapa da esteira"
+                                  >
+                                    {ETAPA_LABEL[etapa]}
+                                  </span>
+                                  {typeof sc === "number" && (
+                                    <span
+                                      className="shrink-0 rounded-lg bg-hub-gold/10 px-2.5 py-1 text-[11px] font-bold text-hub-gold"
+                                      title="Pontuação de prioridade (mesma do ranking do Painel Executivo)"
+                                    >
+                                      {sc}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {e.setor && (
                               <span
                                 className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
