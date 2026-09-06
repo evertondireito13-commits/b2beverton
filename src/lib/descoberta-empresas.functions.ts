@@ -167,19 +167,37 @@ function elementoParaEmpresa(el: {
   };
 }
 
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.openstreetmap.ru/api/interpreter",
+];
+
 async function rodarOverpass(query: string): Promise<
   Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>
 > {
-  const r = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    headers: { "Content-Type": "text/plain", "User-Agent": USER_AGENT },
-    body: query,
-  });
-  if (!r.ok) throw new Error(`Overpass respondeu ${r.status}`);
-  const data = (await r.json()) as {
-    elements: Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
-  };
-  return data.elements ?? [];
+  let ultimoErro: unknown = null;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const r = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain", "User-Agent": USER_AGENT },
+        body: query,
+      });
+      if (!r.ok) {
+        ultimoErro = new Error(`Overpass (${endpoint}) respondeu ${r.status}`);
+        continue;
+      }
+      const data = (await r.json()) as {
+        elements: Array<{ lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }>;
+      };
+      return data.elements ?? [];
+    } catch (err) {
+      ultimoErro = err;
+      continue;
+    }
+  }
+  throw ultimoErro instanceof Error ? ultimoErro : new Error("Todos os servidores Overpass falharam");
 }
 
 async function buscarNoOverpass(tipo: string, bbox: Bbox, limite: number): Promise<EmpresaDescoberta[]> {
