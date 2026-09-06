@@ -146,7 +146,7 @@ function DescobrirPage() {
               }
             >
               <p className="whitespace-pre-wrap">{m.texto}</p>
-              {m.resultados && (
+              {m.tipo === "assistente" && m.resultados && (
                 <div className="mt-3 space-y-1.5">
                   <ul className="space-y-1.5">
                     {m.resultados.map((e, idx) => (
