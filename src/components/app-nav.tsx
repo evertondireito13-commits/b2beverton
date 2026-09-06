@@ -31,6 +31,7 @@ export type NavKey =
   | "estrategia"
   | "reunioes"
   | "preparacao"
+  | "descobrir"
   | "painel"
   | "agenda"
   | "comissao"
@@ -249,7 +250,7 @@ function SortableGroupList({
 
 // --- Menu principal ----------------------------------------------------------
 
-const PROSPECTAR_ORDER = ["pre", "pos", "preparacao"];
+const PROSPECTAR_ORDER = ["pre", "pos", "preparacao", "descobrir"];
 const ACOMPANHAR_ORDER = ["followup", "painel"];
 const REUNIOES_ORDER = ["reunioes"];
 const RESULTADOS_ORDER = ["relatorio", "comissao"];
@@ -294,6 +295,12 @@ export function AppNav({
         return (
           <Link to="/preparacao" className={itemClass(current === "preparacao", true)}>
             <Row icon="🌙" label="Preparação Noturna" active={current === "preparacao"} destaque />
+          </Link>
+        );
+      case "descobrir":
+        return (
+          <Link to="/descobrir" className={itemClass(current === "descobrir", true)}>
+            <Row icon="🔎" label="Descobrir Empresas" active={current === "descobrir"} destaque />
           </Link>
         );
       default:
