@@ -448,6 +448,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [filtroUf, setFiltroUf] = useState("");
   const [filtroSetor, setFiltroSetor] = useState("");
   const [filtroRegime, setFiltroRegime] = useState("");
+  const [filtroEtapa, setFiltroEtapa] = useState<"" | EtapaPipeline>("");
   const [enriquecendo, setEnriquecendo] = useState(false);
   const [progressoEnriquecimento, setProgressoEnriquecimento] = useState<string | null>(null);
   const runGenerate = useServerFn(generateWithAI);
@@ -874,7 +875,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       }
       return true;
     });
-  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime]);
+  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime, filtroEtapa, scoreDaEmpresa]);
 
   function limparFiltros() {
     setFiltroBusca("");
@@ -882,6 +883,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     setFiltroUf("");
     setFiltroSetor("");
     setFiltroRegime("");
+    setFiltroEtapa("");
   }
 
   /** Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI. */
