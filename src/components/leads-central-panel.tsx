@@ -12,6 +12,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { GripVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { E2ESimulator } from "@/components/central/e2e-simulator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -726,8 +727,6 @@ function LeadMiniCard({
     <li>
       <div
         ref={draggable ? drag.setNodeRef : undefined}
-        {...(draggable ? drag.attributes : {})}
-        {...(draggable ? drag.listeners : {})}
         role="button"
         tabIndex={0}
         onClick={onOpen}
@@ -737,7 +736,7 @@ function LeadMiniCard({
             onOpen();
           }
         }}
-        className={`w-full cursor-pointer rounded-xl border bg-card p-3 text-left shadow-sm transition hover:shadow-md ${
+        className={`relative w-full cursor-pointer rounded-xl border bg-card p-3 text-left shadow-sm transition hover:shadow-md ${
           drag.isDragging ? "opacity-40" : ""
         } ${
           parado !== "ok"
@@ -750,7 +749,21 @@ function LeadMiniCard({
         }`}
       >
 
-        <h4 className="line-clamp-2 text-sm font-semibold leading-tight text-navy-deep">
+        {draggable && (
+          <button
+            type="button"
+            {...drag.attributes}
+            {...drag.listeners}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            title="Arrastar para mudar de etapa"
+            aria-label={`Arrastar ${lead.empresa} para outra etapa`}
+            className="absolute right-1.5 top-1.5 grid h-7 w-7 cursor-grab place-items-center rounded-md text-muted-foreground/60 transition hover:bg-accent hover:text-navy-deep active:cursor-grabbing"
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        )}
+        <h4 className="line-clamp-2 pr-7 text-sm font-semibold leading-tight text-navy-deep">
           {lead.empresa}
         </h4>
         <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">
