@@ -33,8 +33,16 @@ import {
 import { useServerFn } from "@tanstack/react-start";
 import { generateWithAI } from "@/lib/prospeccao.functions";
 import { consultarCnpj } from "@/lib/cnpj-enriquecimento.functions";
+import {
+  ETAPAS,
+  ETAPA_LABEL,
+  etapaDaEmpresa,
+  type EtapaPipeline,
+} from "@/lib/pipeline-preparacao";
+import { scoreEmpresas } from "@/lib/lead-score";
+
 import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
-import { getSessionConsultor, getConsultor } from "@/lib/historico-store";
+import { getSessionConsultor, getConsultor, empresaKey } from "@/lib/historico-store";
 import {
   parseDadosCnpj,
   cnpjDigitos,
@@ -440,6 +448,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [filtroUf, setFiltroUf] = useState("");
   const [filtroSetor, setFiltroSetor] = useState("");
   const [filtroRegime, setFiltroRegime] = useState("");
+  const [filtroEtapa, setFiltroEtapa] = useState<"" | EtapaPipeline>("");
   const [enriquecendo, setEnriquecendo] = useState(false);
   const [progressoEnriquecimento, setProgressoEnriquecimento] = useState<string | null>(null);
   const runGenerate = useServerFn(generateWithAI);
@@ -805,13 +814,55 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
     [list],
   );
-  const filtrosAtivos = !!(filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime);
+  const filtrosAtivos = !!(
+    filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime || filtroEtapa
+  );
+
+  /** Pontuação do ranking (mesma lógica do Painel Executivo) por empresa. */
+  const scorePorChave = useMemo(() => {
+    if (!hydrated) return new Map<string, number>();
+    const map = new Map<string, number>();
+    try {
+      for (const s of scoreEmpresas()) {
+        map.set(s.key, s.score);
+        const dig = (s.cnpj ?? "").replace(/\D/g, "");
+        if (dig) map.set(dig, s.score);
+      }
+    } catch {
+      /* histórico indisponível — a esteira segue sem pontuação */
+    }
+    return map;
+  }, [hydrated, list]);
+
+  const scoreDaEmpresa = useCallback(
+    (e: Empresa): number | null => {
+      const dig = (e.cnpj ?? "").replace(/\D/g, "");
+      const porCnpj = dig ? scorePorChave.get(dig) : undefined;
+      if (typeof porCnpj === "number") return porCnpj;
+      const k = empresaKey(e.razaoSocial || e.nome);
+      const v = k ? scorePorChave.get(k) : undefined;
+      return typeof v === "number" ? v : null;
+    },
+    [scorePorChave],
+  );
+
+  const etapaContagem = useMemo(() => {
+    const base: Record<EtapaPipeline, number> = {
+      descobrir: 0,
+      validar: 0,
+      enriquecer: 0,
+      pontuar: 0,
+    };
+    for (const e of empresasOrdenadas) base[etapaDaEmpresa(e, scoreDaEmpresa(e))] += 1;
+    return base;
+  }, [empresasOrdenadas, scoreDaEmpresa]);
 
   const empresasFiltradas = useMemo(() => {
     const q = filtroBusca.trim().toLowerCase();
     const qDig = filtroBusca.replace(/\D/g, "");
     return empresasOrdenadas.filter((e) => {
       if (filtroStatus && (e.status ?? "pending") !== filtroStatus) return false;
+      if (filtroEtapa && etapaDaEmpresa(e, scoreDaEmpresa(e)) !== filtroEtapa) return false;
       if (filtroUf && (e.uf ?? "") !== filtroUf) return false;
       if (filtroSetor && (e.setor ?? "") !== filtroSetor) return false;
       if (filtroRegime === "nao_informado") {
@@ -824,7 +875,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       }
       return true;
     });
-  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime]);
+  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime, filtroEtapa, scoreDaEmpresa]);
 
   function limparFiltros() {
     setFiltroBusca("");
@@ -832,6 +883,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     setFiltroUf("");
     setFiltroSetor("");
     setFiltroRegime("");
+    setFiltroEtapa("");
   }
 
   /** Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI. */
@@ -1306,6 +1358,55 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               )}
             </div>
 
+            {/* Esteira: Descobrir → Validar → Enriquecer → Pontuar */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-hub-line/50 bg-hub-surface/20 px-6 py-3">
+              <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                Esteira
+              </span>
+              {ETAPAS.map((etapa, i) => {
+                const ativo = filtroEtapa === etapa.id;
+                return (
+                  <div key={etapa.id} className="flex items-center gap-2">
+                    {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-hub-muted/60" />}
+                    <button
+                      type="button"
+                      title={etapa.ajuda}
+                      onClick={() => setFiltroEtapa(ativo ? "" : etapa.id)}
+                      className={
+                        "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] font-bold transition " +
+                        (ativo
+                          ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
+                      }
+                    >
+                      {etapa.label}
+                      <span className="rounded-full bg-hub-raised px-2 py-0.5 text-[10px] text-hub-text">
+                        {etapaContagem[etapa.id]}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
+              {filtroEtapa && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroEtapa("")}
+                  className="text-[11px] font-medium text-hub-muted underline hover:text-hub-gold"
+                >
+                  Ver todas as etapas
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void navigate({ to: "/descobrir" })}
+                title="Buscar empresas novas por cidade e tipo de negócio"
+                className="ml-auto flex items-center gap-1.5 rounded-xl border border-hub-line/50 bg-hub-surface px-3 py-1.5 text-[11px] font-bold text-hub-text transition hover:border-hub-gold/50 hover:text-hub-gold"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Descobrir empresas novas
+              </button>
+            </div>
+
             {/* Filtros */}
             <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
               <div className="relative min-w-[220px] flex-1">
@@ -1499,6 +1600,28 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                                 Grupo · {unidades.length}
                               </span>
                             )}
+                            {(() => {
+                              const sc = scoreDaEmpresa(e);
+                              const etapa = etapaDaEmpresa(e, sc);
+                              return (
+                                <>
+                                  <span
+                                    className="shrink-0 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-muted"
+                                    title="Etapa da esteira"
+                                  >
+                                    {ETAPA_LABEL[etapa]}
+                                  </span>
+                                  {typeof sc === "number" && (
+                                    <span
+                                      className="shrink-0 rounded-lg bg-hub-gold/10 px-2.5 py-1 text-[11px] font-bold text-hub-gold"
+                                      title="Pontuação de prioridade (mesma do ranking do Painel Executivo)"
+                                    >
+                                      {sc}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {e.setor && (
                               <span
                                 className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
