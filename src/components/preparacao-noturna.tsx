@@ -33,6 +33,14 @@ import {
 import { useServerFn } from "@tanstack/react-start";
 import { generateWithAI } from "@/lib/prospeccao.functions";
 import { consultarCnpj } from "@/lib/cnpj-enriquecimento.functions";
+import {
+  ETAPAS,
+  ETAPA_LABEL,
+  etapaDaEmpresa,
+  type EtapaPipeline,
+} from "@/lib/pipeline-preparacao";
+import { scoreEmpresas } from "@/lib/lead-score";
+import { empresaKey } from "@/lib/historico-store";
 import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
 import { getSessionConsultor, getConsultor } from "@/lib/historico-store";
 import {
