@@ -726,8 +726,6 @@ function LeadMiniCard({
     <li>
       <div
         ref={draggable ? drag.setNodeRef : undefined}
-        {...(draggable ? drag.attributes : {})}
-        {...(draggable ? drag.listeners : {})}
         role="button"
         tabIndex={0}
         onClick={onOpen}
@@ -737,7 +735,7 @@ function LeadMiniCard({
             onOpen();
           }
         }}
-        className={`w-full cursor-pointer rounded-xl border bg-card p-3 text-left shadow-sm transition hover:shadow-md ${
+        className={`relative w-full cursor-pointer rounded-xl border bg-card p-3 text-left shadow-sm transition hover:shadow-md ${
           drag.isDragging ? "opacity-40" : ""
         } ${
           parado !== "ok"
