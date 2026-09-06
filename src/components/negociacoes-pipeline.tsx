@@ -11,7 +11,18 @@ import {
   ArrowRight,
   Pencil,
   Trash2,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -112,6 +123,12 @@ function toLocalInput(iso: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function currentStageOf(row: FollowUp): NegStage {
+  if (row.status === "done") return "fechada";
+  if (row.status === "cancelled") return "perdida";
+  return parseStage(row.notes).stage;
+}
+
 export function NegociacoesPipeline() {
   const [rows, setRows] = useState<FollowUp[]>([]);
   const [loading, setLoading] = useState(false);
@@ -120,6 +137,9 @@ export function NegociacoesPipeline() {
   const runList = useServerFn(listFollowUps);
   const runUpdate = useServerFn(updateFollowUp);
   const runDelete = useServerFn(deleteFollowUp);
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -165,11 +185,7 @@ export function NegociacoesPipeline() {
       perdida: [],
     };
     for (const r of rows) {
-      let stage: NegStage;
-      if (r.status === "done") stage = "fechada";
-      else if (r.status === "cancelled") stage = "perdida";
-      else stage = parseStage(r.notes).stage;
-      map[stage].push(r);
+      map[currentStageOf(r)].push(r);
     }
     const asc = (a: FollowUp, b: FollowUp) =>
       new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
@@ -204,6 +220,18 @@ export function NegociacoesPipeline() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Falha ao mover");
     }
+  }
+
+  /** Arrastar um card e soltar em outra coluna move o estágio (mesma ação dos botões). */
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const targetStage = String(over.id) as NegStage;
+    if (!STAGE_LABEL[targetStage]) return;
+    const row = rows.find((r) => r.id === String(active.id));
+    if (!row) return;
+    if (currentStageOf(row) === targetStage) return;
+    void setStage(row, targetStage);
   }
 
   async function reopen(row: FollowUp) {
@@ -302,35 +330,37 @@ export function NegociacoesPipeline() {
           para começar a acompanhar aqui.
         </p>
       ) : (
-        <div className="grid gap-3 md:grid-cols-3">
-          {ACTIVE_STAGES.map((s) => (
-            <StageColumn
-              key={s}
-              stage={s}
-              rows={bucketed[s]}
-              onSetStage={setStage}
-              onEdit={setEditing}
-              onRemove={remove}
-            />
-          ))}
-        </div>
-      )}
+        <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <div className="grid gap-3 md:grid-cols-3">
+            {ACTIVE_STAGES.map((s) => (
+              <StageColumn
+                key={s}
+                stage={s}
+                rows={bucketed[s]}
+                onSetStage={setStage}
+                onEdit={setEditing}
+                onRemove={remove}
+              />
+            ))}
+          </div>
 
-      {showClosed && (
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <ClosedColumn
-            stage="fechada"
-            rows={bucketed.fechada}
-            onReopen={reopen}
-            onRemove={remove}
-          />
-          <ClosedColumn
-            stage="perdida"
-            rows={bucketed.perdida}
-            onReopen={reopen}
-            onRemove={remove}
-          />
-        </div>
+          {showClosed && (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <ClosedColumn
+                stage="fechada"
+                rows={bucketed.fechada}
+                onReopen={reopen}
+                onRemove={remove}
+              />
+              <ClosedColumn
+                stage="perdida"
+                rows={bucketed.perdida}
+                onReopen={reopen}
+                onRemove={remove}
+              />
+            </div>
+          )}
+        </DndContext>
       )}
 
       <EditNegDialog row={editing} onClose={() => setEditing(null)} onSave={saveEdit} />
@@ -354,16 +384,22 @@ function StageColumn({
   const idx = ACTIVE_STAGES.indexOf(stage);
   const nextStage = idx >= 0 && idx < ACTIVE_STAGES.length - 1 ? ACTIVE_STAGES[idx + 1] : null;
   const prevStage = idx > 0 ? ACTIVE_STAGES[idx - 1] : null;
+  const { setNodeRef, isOver } = useDroppable({ id: stage });
   return (
-    <div className={`rounded-xl border p-2 ${STAGE_TONE[stage]}`}>
+    <div
+      ref={setNodeRef}
+      className={`rounded-xl border p-2 transition ${STAGE_TONE[stage]} ${isOver ? "ring-2 ring-primary/60" : ""}`}
+    >
       <div className={`mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide ${STAGE_HEADER[stage]}`}>
         <span>{STAGE_LABEL[stage]}</span>
         <span className="text-[10px] font-normal text-muted-foreground">{rows.length}</span>
       </div>
       {rows.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground/70">—</p>
+        <p className="text-[11px] text-muted-foreground/70">
+          {isOver ? "Solte aqui" : "—"}
+        </p>
       ) : (
-        <ul className="space-y-1.5">
+        <ul className="min-h-[20px] space-y-1.5">
           {rows.map((r) => (
             <NegCard
               key={r.id}
@@ -393,16 +429,20 @@ function ClosedColumn({
   onReopen: (r: FollowUp) => void;
   onRemove: (r: FollowUp) => void;
 }) {
+  const { setNodeRef, isOver } = useDroppable({ id: stage });
   return (
-    <div className={`rounded-xl border p-2 ${STAGE_TONE[stage]}`}>
+    <div
+      ref={setNodeRef}
+      className={`rounded-xl border p-2 transition ${STAGE_TONE[stage]} ${isOver ? "ring-2 ring-primary/60" : ""}`}
+    >
       <div className={`mb-2 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wide ${STAGE_HEADER[stage]}`}>
         <span>{stage === "fechada" ? "🏆 Fechadas" : "❌ Perdidas"}</span>
         <span className="text-[10px] font-normal text-muted-foreground">{rows.length}</span>
       </div>
       {rows.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground/70">—</p>
+        <p className="text-[11px] text-muted-foreground/70">{isOver ? "Solte aqui" : "—"}</p>
       ) : (
-        <ul className="space-y-1.5">
+        <ul className="min-h-[20px] space-y-1.5">
           {rows.map((r) => {
             const { clean } = parseStage(r.notes);
             return (
@@ -462,12 +502,32 @@ function NegCard({
   const now = Date.now();
   const scheduled = new Date(row.scheduled_at).getTime();
   const overdue = scheduled < now;
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: row.id,
+  });
+  const style = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+    : undefined;
   return (
-    <li className={`rounded-lg border bg-white/80 px-2.5 py-2 text-xs ${overdue ? "border-red-300" : "border-border"}`}>
-      <div className="mb-1">
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-lg border bg-white/80 px-2.5 py-2 text-xs ${overdue ? "border-red-300" : "border-border"} ${isDragging ? "z-20 opacity-60 shadow-lg" : ""}`}
+    >
+      <div className="mb-1 flex items-center justify-between gap-1">
         <span className={`inline-block rounded-full border px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wide ${STAGE_TONE[stage]} ${STAGE_HEADER[stage]}`}>
           {STAGE_LABEL[stage]}
         </span>
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          title="Arraste para mudar de etapa"
+          aria-label="Arrastar negociação"
+          className="cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
       </div>
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
