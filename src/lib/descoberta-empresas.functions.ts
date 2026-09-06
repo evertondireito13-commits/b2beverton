@@ -1,7 +1,6 @@
-// Busca de empresas por linguagem natural ("ache metalúrgicas em Curitiba"),
-// usando OpenStreetMap (Nominatim + Overpass) — 100% gratuito, SEM usar IA e
-// SEM gastar créditos do Lovable. A extração de cidade/tipo é feita por
-// reconhecimento de padrão de texto (regex), não por modelo de linguagem.
+// Busca de empresas por tipo de negócio + cidade, usando OpenStreetMap
+// (Nominatim + Overpass) — 100% gratuito, SEM usar IA e SEM gastar créditos
+// do Lovable.
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireBhmGate } from "@/lib/bhm-gate";
@@ -17,17 +16,6 @@ export type EmpresaDescoberta = {
   lon: number;
 };
 
-/** Separa "TIPO em/na/no CIDADE" em duas partes usando regex simples (sem IA). */
-export function interpretarConsulta(texto: string): { tipo: string; cidade: string } | null {
-  const limpo = texto.trim();
-  const m = limpo.match(/^(.*?)\s+(?:em|na|no|de)\s+([^,]+?)\s*$/i);
-  if (!m) return null;
-  const tipo = m[1].trim();
-  const cidade = m[2].trim();
-  if (!tipo || !cidade) return null;
-  return { tipo, cidade };
-}
-
 /** Remove acentos, deixa minúsculo e tira um "s" final simples (singulariza). */
 function normalizar(texto: string): string {
   const semAcento = texto
@@ -39,21 +27,26 @@ function normalizar(texto: string): string {
 
 /**
  * Dicionário: termo comum em português (já normalizado/singular) -> filtro(s)
- * de tag do OpenStreetMap. Isso é o que faltava: sem isso, a busca só
- * encontrava empresas cujo NOME continha a palavra digitada, o que quase
- * nunca acontece (uma metalúrgica raramente se chama "Metalúrgica" no mapa).
+ * de tag do OpenStreetMap. Quanto mais tags por termo, maior a chance de achar
+ * o negócio real — o cadastro no OSM varia bastante de um contribuinte pro
+ * outro, então vale a pena cobrir várias variações.
  */
 const TIPO_TAGS: Record<string, string[]> = {
-  metalurgica: ['["craft"="metal_construction"]', '["industrial"="metal"]'],
-  serralheria: ['["craft"="metal_construction"]'],
-  transportadora: ['["office"="logistics"]', '["amenity"="freight_terminal"]'],
+  metalurgica: [
+    '["craft"="metal_construction"]',
+    '["craft"="blacksmith"]',
+    '["man_made"="works"]',
+    '["building"="industrial"]',
+  ],
+  serralheria: ['["craft"="metal_construction"]', '["craft"="blacksmith"]'],
+  transportadora: ['["office"="logistics"]', '["amenity"="freight_terminal"]', '["landuse"="industrial"]'],
   advocacia: ['["office"="lawyer"]'],
   escritoriodeadvocacia: ['["office"="lawyer"]'],
   contabilidade: ['["office"="accountant"]'],
   contador: ['["office"="accountant"]'],
   grafica: ['["shop"="printing"]', '["craft"="printer"]'],
-  industria: ['["landuse"="industrial"]', '["building"="industrial"]'],
-  fabrica: ['["landuse"="industrial"]', '["building"="industrial"]'],
+  industria: ['["landuse"="industrial"]', '["building"="industrial"]', '["man_made"="works"]'],
+  fabrica: ['["landuse"="industrial"]', '["building"="industrial"]', '["man_made"="works"]'],
   oficinamecanica: ['["shop"="car_repair"]'],
   oficina: ['["shop"="car_repair"]'],
   imobiliaria: ['["office"="estate_agent"]'],
@@ -86,7 +79,22 @@ const TIPO_TAGS: Record<string, string[]> = {
   ti: ['["office"="it"]'],
   tecnologia: ['["office"="it"]'],
   software: ['["office"="it"]'],
+  atacado: ['["shop"="wholesale"]'],
+  atacadista: ['["shop"="wholesale"]'],
+  comercioatacadista: ['["shop"="wholesale"]'],
 };
+
+/** Lista curada pra exibir como sugestões rápidas na tela (chips clicáveis). */
+export const TIPOS_SUGERIDOS: { label: string; consulta: string }[] = [
+  { label: "Metalúrgicas", consulta: "metalúrgicas" },
+  { label: "Indústrias", consulta: "indústrias" },
+  { label: "Transportadoras", consulta: "transportadoras" },
+  { label: "Fábricas", consulta: "fábricas" },
+  { label: "Atacadistas", consulta: "atacadistas" },
+  { label: "Serralherias", consulta: "serralherias" },
+  { label: "Construtoras", consulta: "materiais de construção" },
+  { label: "Contabilidade", consulta: "contabilidade" },
+];
 
 function tagsParaTipo(tipo: string): string[] {
   const chave = normalizar(tipo).replace(/\s+/g, "");
@@ -95,8 +103,20 @@ function tagsParaTipo(tipo: string): string[] {
 
 type Bbox = { south: number; north: number; west: number; east: number };
 
-async function geocodarCidade(cidade: string): Promise<Bbox | null> {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(cidade)}`;
+/** Alarga a caixa da cidade em ~6km pra pegar distritos industriais que
+ * ficam na borda/fora do limite oficial usado pelo Nominatim. */
+function ampliarBbox(bbox: Bbox, graus = 0.06): Bbox {
+  return {
+    south: bbox.south - graus,
+    north: bbox.north + graus,
+    west: bbox.west - graus,
+    east: bbox.east + graus,
+  };
+}
+
+async function geocodarCidade(cidade: string, uf?: string): Promise<Bbox | null> {
+  const consulta = uf ? `${cidade}, ${uf}` : cidade;
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(consulta)}`;
   const r = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
   if (!r.ok) return null;
   const arr = (await r.json()) as Array<{ boundingbox?: [string, string, string, string] }>;
@@ -104,7 +124,7 @@ async function geocodarCidade(cidade: string): Promise<Bbox | null> {
   if (!bb) return null;
   const [south, north, west, east] = bb.map(Number);
   if ([south, north, west, east].some((n) => !Number.isFinite(n))) return null;
-  return { south, north, west, east };
+  return ampliarBbox({ south, north, west, east });
 }
 
 function firstTag(tags: Record<string, string> | undefined, ...keys: string[]): string | undefined {
@@ -190,7 +210,7 @@ async function buscarNoOverpass(tipo: string, bbox: Bbox, limite: number): Promi
 
   if (blocos.length === 0) return [];
 
-  const query = `[out:json][timeout:25];(${blocos.join("")});out center ${limiteSeguro * 2};`;
+  const query = `[out:json][timeout:25];(${blocos.join("")});out center ${limiteSeguro * 3};`;
   const elementos = await rodarOverpass(query);
 
   const vistos = new Set<string>();
@@ -212,33 +232,27 @@ export const buscarEmpresasPorTexto = createServerFn({ method: "POST" })
   .validator((input: unknown) =>
     z
       .object({
-        consulta: z.string().trim().min(3).max(200),
+        tipo: z.string().trim().min(2).max(80),
+        cidade: z.string().trim().min(2).max(120),
+        uf: z.string().trim().length(2).optional(),
         limite: z.number().int().min(1).max(60).optional(),
       })
       .parse(input),
   )
   .handler(async ({ data }) => {
-    const partes = interpretarConsulta(data.consulta);
-    if (!partes) {
-      return {
-        ok: false as const,
-        erro:
-          'Não consegui identificar a cidade. Tente escrever assim: "metalúrgicas em Curitiba" ou "transportadoras em Londrina".',
-      };
-    }
-    const bbox = await geocodarCidade(partes.cidade);
+    const bbox = await geocodarCidade(data.cidade, data.uf);
     if (!bbox) {
       return {
         ok: false as const,
-        erro: `Não encontrei a cidade "${partes.cidade}". Confira a grafia e tente de novo.`,
+        erro: `Não encontrei a cidade "${data.cidade}". Confira a grafia e tente de novo.`,
       };
     }
     try {
-      const resultados = await buscarNoOverpass(partes.tipo, bbox, data.limite ?? 20);
+      const resultados = await buscarNoOverpass(data.tipo, bbox, data.limite ?? 25);
       return {
         ok: true as const,
-        tipo: partes.tipo,
-        cidade: partes.cidade,
+        tipo: data.tipo,
+        cidade: data.cidade,
         resultados,
       };
     } catch (err) {
