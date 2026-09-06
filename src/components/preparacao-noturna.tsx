@@ -42,6 +42,7 @@ import {
   unidadeLabel,
   cidadeUfDoTexto,
 } from "@/lib/cnpj-raw-parser";
+import { verificarEmailDominio, type ResultadoVerificacaoEmail } from "@/lib/email-verify";
 
 export const LOAD_PRE_LIGACAO_EVENT = "bhm:load-to-pre-ligacao";
 export const PREPARACAO_REALIZADA_EVENT = "bhm:preparacao-realizada";
@@ -1826,6 +1827,8 @@ function EditEmpresaDialog({
   const [cargo, setCargo] = useState("");
   const [telefone, setTelefone] = useState("");
   const [email, setEmail] = useState("");
+  const [emailCheck, setEmailCheck] = useState<ResultadoVerificacaoEmail | null>(null);
+  const [emailChecking, setEmailChecking] = useState(false);
   const [observacoes, setObservacoes] = useState("");
   const [textoBruto, setTextoBruto] = useState("");
   const [uf, setUf] = useState("");
@@ -1843,6 +1846,8 @@ function EditEmpresaDialog({
     setCargo(empresa.cargo || auto.cargo || "");
     setTelefone(empresa.telefone || auto.telefone || "");
     setEmail(empresa.email || auto.email || "");
+    setEmailCheck(null);
+    setEmailChecking(false);
     setObservacoes(empresa.observacoes || auto.observacoes || "");
     setTextoBruto(empresa.textoBruto ?? "");
     setUf(empresa.uf || auto.uf || "");
@@ -1922,7 +1927,42 @@ function EditEmpresaDialog({
             <Field label="Contato" value={contato} onChange={setContato} />
             <Field label="Cargo" value={cargo} onChange={setCargo} />
           </div>
-          <Field label="E-mail" value={email} onChange={setEmail} type="email" />
+          <div className="grid gap-1.5">
+            <Label className="text-[11px]">E-mail</Label>
+            <div className="flex gap-2">
+              <Input
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailCheck(null);
+                }}
+                type="email"
+                className="h-9 flex-1 text-[12px]"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0 px-2.5 text-[11px]"
+                disabled={!email.trim() || emailChecking}
+                onClick={async () => {
+                  setEmailChecking(true);
+                  setEmailCheck(null);
+                  const r = await verificarEmailDominio(email);
+                  setEmailCheck(r);
+                  setEmailChecking(false);
+                }}
+              >
+                {emailChecking ? "Verificando…" : "Verificar"}
+              </Button>
+            </div>
+            {emailCheck && (
+              <p className={"text-[11px] " + (emailCheck.valido ? "text-emerald-600" : "text-red-600")}>
+                {emailCheck.valido ? "✓ " : "⚠ "}
+                {emailCheck.motivo}
+              </p>
+            )}
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
               <Label className="text-[11px]">UF</Label>
