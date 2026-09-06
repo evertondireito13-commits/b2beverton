@@ -1396,6 +1396,15 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   Ver todas as etapas
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => void navigate({ to: "/descobrir" })}
+                title="Buscar empresas novas por cidade e tipo de negócio"
+                className="ml-auto flex items-center gap-1.5 rounded-xl border border-hub-line/50 bg-hub-surface px-3 py-1.5 text-[11px] font-bold text-hub-text transition hover:border-hub-gold/50 hover:text-hub-gold"
+              >
+                <Search className="h-3.5 w-3.5" />
+                Descobrir empresas novas
+              </button>
             </div>
 
             {/* Filtros */}
