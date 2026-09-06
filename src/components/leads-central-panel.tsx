@@ -12,6 +12,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { GripVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { E2ESimulator } from "@/components/central/e2e-simulator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
