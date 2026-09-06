@@ -813,13 +813,55 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
     [list],
   );
-  const filtrosAtivos = !!(filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime);
+  const filtrosAtivos = !!(
+    filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime || filtroEtapa
+  );
+
+  /** Pontuação do ranking (mesma lógica do Painel Executivo) por empresa. */
+  const scorePorChave = useMemo(() => {
+    if (!hydrated) return new Map<string, number>();
+    const map = new Map<string, number>();
+    try {
+      for (const s of scoreEmpresas()) {
+        map.set(s.key, s.score);
+        const dig = (s.cnpj ?? "").replace(/\D/g, "");
+        if (dig) map.set(dig, s.score);
+      }
+    } catch {
+      /* histórico indisponível — a esteira segue sem pontuação */
+    }
+    return map;
+  }, [hydrated, list]);
+
+  const scoreDaEmpresa = useCallback(
+    (e: Empresa): number | null => {
+      const dig = (e.cnpj ?? "").replace(/\D/g, "");
+      const porCnpj = dig ? scorePorChave.get(dig) : undefined;
+      if (typeof porCnpj === "number") return porCnpj;
+      const k = empresaKey(e.razaoSocial || e.nome);
+      const v = k ? scorePorChave.get(k) : undefined;
+      return typeof v === "number" ? v : null;
+    },
+    [scorePorChave],
+  );
+
+  const etapaContagem = useMemo(() => {
+    const base: Record<EtapaPipeline, number> = {
+      descobrir: 0,
+      validar: 0,
+      enriquecer: 0,
+      pontuar: 0,
+    };
+    for (const e of empresasOrdenadas) base[etapaDaEmpresa(e, scoreDaEmpresa(e))] += 1;
+    return base;
+  }, [empresasOrdenadas, scoreDaEmpresa]);
 
   const empresasFiltradas = useMemo(() => {
     const q = filtroBusca.trim().toLowerCase();
     const qDig = filtroBusca.replace(/\D/g, "");
     return empresasOrdenadas.filter((e) => {
       if (filtroStatus && (e.status ?? "pending") !== filtroStatus) return false;
+      if (filtroEtapa && etapaDaEmpresa(e, scoreDaEmpresa(e)) !== filtroEtapa) return false;
       if (filtroUf && (e.uf ?? "") !== filtroUf) return false;
       if (filtroSetor && (e.setor ?? "") !== filtroSetor) return false;
       if (filtroRegime === "nao_informado") {
