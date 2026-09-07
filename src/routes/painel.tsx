@@ -124,9 +124,33 @@ function PainelPage() {
               ))}
             </div>
             {buscando && (
-              <Badge variant="outline" className="ml-auto">
-                {filtradas.length} empresa(s)
-              </Badge>
+              <div className="ml-auto flex items-center gap-2">
+                <Badge variant="outline">{filtradas.length} empresa(s)</Badge>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline" className="h-9">
+                      ⬇️ Baixar lista
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {(Object.keys(FORMATO_LABEL) as FormatoExport[]).map((f) => (
+                      <DropdownMenuItem
+                        key={f}
+                        onClick={() => {
+                          if (filtradas.length === 0) {
+                            toast.error("Nenhuma empresa nos filtros atuais");
+                            return;
+                          }
+                          exportarEmpresas(filtradas, f);
+                          toast.success(`${filtradas.length} empresa(s) baixadas`);
+                        }}
+                      >
+                        {FORMATO_LABEL[f]}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             )}
           </div>
         </header>
