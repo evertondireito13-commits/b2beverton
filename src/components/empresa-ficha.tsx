@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { verificarEmailEmCamadas, type AvaliacaoEmail } from "@/lib/email-score";
 import { PRIORIDADE_LABEL, PRIORIDADE_TONE } from "@/lib/lead-score";
 import type { Ficha } from "@/lib/company-ficha";
 import { LEAD_STATUS_LABEL } from "@/lib/leads-store";
