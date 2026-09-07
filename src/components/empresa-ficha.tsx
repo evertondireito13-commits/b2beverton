@@ -9,6 +9,7 @@ import { LEAD_STATUS_LABEL } from "@/lib/leads-store";
 import { setActiveLead } from "@/lib/daily-activities";
 import { addEmpresaToPreparacaoNoturna } from "@/components/preparacao-noturna";
 import { iniciarLigacaoParaEmpresa } from "@/lib/pre-ligacao-handoff";
+import { infoNaoContatar, marcarNaoContatar, liberarNaoContatar } from "@/lib/nao-contatar";
 
 export function FichaEmpresa({ ficha }: { ficha: Ficha }) {
   const telefonePrincipal = (
@@ -103,7 +104,7 @@ export function FichaEmpresa({ ficha }: { ficha: Ficha }) {
         )}
       </div>
 
-      <VerificacaoEmails ficha={ficha} />
+      <StatusContato ficha={ficha} />
 
       <TimelineFicha ficha={ficha} />
     </section>
@@ -115,6 +116,87 @@ const TOM_NOTA: Record<AvaliacaoEmail["classificacao"], string> = {
   atencao: "border-amber-300 bg-amber-50 text-amber-800",
   ruim: "border-rose-300 bg-rose-50 text-rose-800",
 };
+
+/** Card único: nota de e-mail + situação na Central + bloqueio "não contatar". */
+function StatusContato({ ficha }: { ficha: Ficha }) {
+  const [tick, setTick] = useState(0);
+  void tick; // força recomputar infoNaoContatar após marcar/liberar
+  const [mostrarMotivo, setMostrarMotivo] = useState(false);
+  const [motivo, setMotivo] = useState("");
+
+  const bloqueio = infoNaoContatar(ficha.empresa, ficha.cnpj);
+  const bloqueada = !!bloqueio;
+
+  return (
+    <div className="space-y-3 rounded-xl border border-border/70 p-3">
+      <h3 className="text-sm font-semibold text-navy-deep">📋 Status de Contato</h3>
+
+      <VerificacaoEmails ficha={ficha} />
+
+      <div className="rounded-lg border border-border/70 px-2.5 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Situação na Central
+            </p>
+            <p className="text-[11px] font-medium text-navy-deep">
+              {ficha.lead ? LEAD_STATUS_LABEL[ficha.lead.status] : "Fora da Central"}
+            </p>
+          </div>
+          {bloqueada ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                liberarNaoContatar(ficha.empresa, ficha.cnpj);
+                setTick((n) => n + 1);
+              }}
+            >
+              🔓 Liberar contato
+            </Button>
+          ) : (
+            <Button size="sm" variant="destructive" onClick={() => setMostrarMotivo((v) => !v)}>
+              🚫 Não contatar
+            </Button>
+          )}
+        </div>
+
+        {bloqueada && bloqueio && (
+          <p className="mt-1.5 text-[10px] text-rose-700">
+            🚫 Bloqueada em {new Date(bloqueio.at).toLocaleDateString("pt-BR")}
+            {bloqueio.motivo ? ` · motivo: ${bloqueio.motivo}` : ""}
+          </p>
+        )}
+
+        {!bloqueada && mostrarMotivo && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <input
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Motivo (opcional)"
+              className="h-8 min-w-[160px] flex-1 rounded-md border border-border bg-background px-2 text-[11px]"
+            />
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                marcarNaoContatar(ficha.empresa, ficha.cnpj, motivo);
+                setMostrarMotivo(false);
+                setMotivo("");
+                setTick((n) => n + 1);
+              }}
+            >
+              Confirmar bloqueio
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setMostrarMotivo(false)}>
+              Cancelar
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function VerificacaoEmails({ ficha }: { ficha: Ficha }) {
   const [resultados, setResultados] = useState<AvaliacaoEmail[] | null>(null);
