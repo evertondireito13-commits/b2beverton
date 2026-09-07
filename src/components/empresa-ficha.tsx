@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { verificarEmailEmCamadas, type AvaliacaoEmail } from "@/lib/email-score";
 import { PRIORIDADE_LABEL, PRIORIDADE_TONE } from "@/lib/lead-score";
 import type { Ficha } from "@/lib/company-ficha";
 import { LEAD_STATUS_LABEL } from "@/lib/leads-store";
@@ -102,8 +103,78 @@ export function FichaEmpresa({ ficha }: { ficha: Ficha }) {
         )}
       </div>
 
+      <VerificacaoEmails ficha={ficha} />
+
       <TimelineFicha ficha={ficha} />
     </section>
+  );
+}
+
+const TOM_NOTA: Record<AvaliacaoEmail["classificacao"], string> = {
+  bom: "border-emerald-300 bg-emerald-50 text-emerald-800",
+  atencao: "border-amber-300 bg-amber-50 text-amber-800",
+  ruim: "border-rose-300 bg-rose-50 text-rose-800",
+};
+
+function VerificacaoEmails({ ficha }: { ficha: Ficha }) {
+  const [resultados, setResultados] = useState<AvaliacaoEmail[] | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  const texto = [ficha.emails, ficha.lead?.email ?? ""].join(" ");
+  const emails = Array.from(
+    new Set((texto.match(/[^\s,;<>()]+@[^\s,;<>()]+\.[^\s,;<>()]+/g) ?? []).map((e) => e.toLowerCase())),
+  );
+
+  if (emails.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-border/70 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-navy-deep">
+          ✉️ Confiança dos e-mails ({emails.length})
+        </h3>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={carregando}
+          onClick={async () => {
+            setCarregando(true);
+            try {
+              setResultados(await Promise.all(emails.map((e) => verificarEmailEmCamadas(e))));
+            } finally {
+              setCarregando(false);
+            }
+          }}
+        >
+          {carregando ? "Conferindo…" : resultados ? "Conferir de novo" : "Conferir e-mails"}
+        </Button>
+      </div>
+      {!resultados ? (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Confere formato, se o domínio existe e recebe mensagens, se é caixa temporária ou caixa
+          geral da empresa — e dá uma nota de 0 a 100 antes de você enviar a proposta.
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {resultados.map((r) => (
+            <li key={r.email} className={`rounded-lg border px-2.5 py-2 ${TOM_NOTA[r.classificacao]}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="break-all text-[11px] font-semibold">{r.email}</span>
+                <span className="text-xs font-bold">{r.nota}/100</span>
+              </div>
+              <p className="text-[10px]">{r.resumo}</p>
+              <ul className="mt-1 flex flex-wrap gap-1">
+                {r.camadas.map((c) => (
+                  <li key={c.nome} className="rounded-full bg-background/70 px-1.5 py-0.5 text-[9px]">
+                    {c.ok === true ? "✅" : c.ok === false ? "⚠️" : "❔"} {c.nome}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
