@@ -125,3 +125,13 @@ export function listarNaoContatarUnicos(): BloqueioContato[] {
   }
   return out;
 }
+
+/** Retorna a entrada completa do bloqueio (motivo + data), ou null se não estiver bloqueada. */
+export function infoNaoContatar(
+  empresa?: string | null,
+  cnpj?: string | null,
+): BloqueioContato | null {
+  const alvo = new Set(chavesIdentidade(empresa, cnpj));
+  if (alvo.size === 0) return null;
+  return listarNaoContatar().find((e) => alvo.has(e.key)) ?? null;
+}
