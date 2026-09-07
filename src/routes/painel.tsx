@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PRIORIDADE_LABEL, PRIORIDADE_TONE } from "@/lib/lead-score";
 import { montarFichas } from "@/lib/company-ficha";
 import { exportarEmpresas, FORMATO_LABEL, type FormatoExport } from "@/lib/exportar-empresas";
+import { isNaoContatar, listarNaoContatarUnicos, liberarNaoContatar } from "@/lib/nao-contatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -55,6 +56,7 @@ function PainelPage() {
   const [busca, setBusca] = useState(q ?? "");
   const [prioridade, setPrioridade] = useState<string>("todas");
   const [selecionada, setSelecionada] = useState<string | null>(null);
+  const [mostrarBloqueadas, setMostrarBloqueadas] = useState(false);
 
   useEffect(() => {
     if (q) setBusca(q);
@@ -63,12 +65,18 @@ function PainelPage() {
   useEffect(() => {
     setHydrated(true);
     const bump = () => setTick((n) => n + 1);
-    const evts = ["bhm:historico-updated", "bhm:leads-updated", "bhm:session-changed", "storage"];
+    const evts = [
+      "bhm:historico-updated",
+      "bhm:leads-updated",
+      "bhm:session-changed",
+      "bhm:nao-contatar-updated",
+      "storage",
+    ];
     evts.forEach((e) => window.addEventListener(e, bump));
     return () => evts.forEach((e) => window.removeEventListener(e, bump));
   }, []);
 
-  const buscando = busca.trim().length > 0 || prioridade !== "todas";
+  const buscando = busca.trim().length > 0 || prioridade !== "todas" || mostrarBloqueadas;
 
   const fichas = useMemo(() => {
     if (!hydrated || !buscando) return [];
@@ -77,7 +85,13 @@ function PainelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, tick, buscando]);
 
-  const filtradas = useMemo(() => {
+  const bloqueadasCount = useMemo(() => {
+    void tick;
+    return listarNaoContatarUnicos().length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
+
+  const filtradasBase = useMemo(() => {
     const termo = busca.trim().toLowerCase();
     const digits = termo.replace(/\D/g, "");
     return fichas.filter((f) => {
@@ -88,6 +102,13 @@ function PainelPage() {
       return false;
     });
   }, [fichas, busca, prioridade]);
+
+  const filtradas = useMemo(() => {
+    if (mostrarBloqueadas) {
+      return filtradasBase.filter((f) => isNaoContatar(f.empresa, f.cnpj));
+    }
+    return filtradasBase.filter((f) => !isNaoContatar(f.empresa, f.cnpj));
+  }, [filtradasBase, mostrarBloqueadas]);
 
   const atual = filtradas.find((f) => f.key === selecionada) ?? filtradas[0] ?? null;
 
@@ -123,6 +144,14 @@ function PainelPage() {
                 </button>
               ))}
             </div>
+            <Button
+              size="sm"
+              variant={mostrarBloqueadas ? "default" : "outline"}
+              className="h-9"
+              onClick={() => setMostrarBloqueadas((v) => !v)}
+            >
+              🚫 Bloqueadas ({bloqueadasCount})
+            </Button>
             {buscando && (
               <div className="ml-auto flex items-center gap-2">
                 <Badge variant="outline">{filtradas.length} empresa(s)</Badge>
@@ -171,7 +200,6 @@ function PainelPage() {
             </TabsContent>
           </Tabs>
         ) : !hydrated ? (
-
           <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
             <Skeleton className="h-96 rounded-2xl" />
             <Skeleton className="h-96 rounded-2xl" />
@@ -181,11 +209,13 @@ function PainelPage() {
             <ul className="max-h-[70vh] space-y-1.5 overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-card">
               {filtradas.length === 0 && (
                 <li className="p-6 text-center text-xs text-muted-foreground">
-                  Nenhuma empresa encontrada com esses filtros.
+                  {mostrarBloqueadas
+                    ? "Nenhuma empresa bloqueada no momento."
+                    : "Nenhuma empresa encontrada com esses filtros."}
                 </li>
               )}
               {filtradas.map((f) => (
-                <li key={f.key}>
+                <li key={f.key} className="space-y-1">
                   <button
                     type="button"
                     onClick={() => setSelecionada(f.key)}
@@ -210,6 +240,18 @@ function PainelPage() {
                       </span>
                     </div>
                   </button>
+                  {mostrarBloqueadas && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        liberarNaoContatar(f.empresa, f.cnpj);
+                        setTick((n) => n + 1);
+                      }}
+                      className="w-full rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[10px] font-medium text-rose-800 hover:bg-rose-100"
+                    >
+                      🔓 Liberar contato
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
