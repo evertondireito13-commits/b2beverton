@@ -890,10 +890,20 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     setFiltroEtapa("");
   }
 
+  /** Espera N milissegundos — usado para não estourar o limite de requisições da BrasilAPI. */
+  function aguardar(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   /**
    * Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI,
    * a partir de uma lista específica (usado tanto pelo botão manual quanto
    * pela importação por CNPJ, que dispara isso sozinha logo após cadastrar).
+   *
+   * A BrasilAPI é gratuita mas tem limite de requisições por segundo — por
+   * isso aguardamos um pouco entre cada consulta e, se ainda assim vier
+   * "HTTP 429" (limite excedido), esperamos mais e tentamos de novo antes de
+   * desistir daquela empresa.
    */
   async function enriquecerListaCnpjs(baseList: Empresa[]) {
     const alvos = baseList.filter(
@@ -911,46 +921,64 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     for (let i = 0; i < alvos.length; i++) {
       const alvo = alvos[i];
       setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
-      try {
-        const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
-        if (r.ok) {
-          ok += 1;
-          atual = atual.map((e) => {
-            if (e.id !== alvo.id) return e;
-            // Monta um bloco com o que a Receita devolveu e que não tem
-            // campo próprio no cadastro (situação, natureza, porte, capital,
-            // endereço, sócios) — só entra em Observações se estiver vazia,
-            // pra nunca sobrepor anotação manual sua.
-            const extras = [
-              r.situacaoCadastral ? `Situação cadastral: ${r.situacaoCadastral}` : null,
-              r.naturezaJuridica ? `Natureza jurídica: ${r.naturezaJuridica}` : null,
-              r.porte ? `Porte: ${r.porte}` : null,
-              r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
-              r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
-              r.endereco ? `Endereço: ${r.endereco}` : null,
-              r.socios ? `Sócios: ${r.socios}` : null,
-            ].filter((linha): linha is string => !!linha);
-            return {
-              ...e,
-              uf: e.uf || r.uf || undefined,
-              setor: e.setor || r.setor || undefined,
-              regime: e.regime || r.regime || undefined,
-              telefone: e.telefone || r.telefone || undefined,
-              email: e.email || r.email || undefined,
-              razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
-              observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
-            };
-          });
-        } else {
+      // Pausa entre consultas (menos agressiva na primeira) para não
+      // estourar o limite de requisições por segundo da BrasilAPI.
+      if (i > 0) await aguardar(1200);
+
+      let tentativas = 0;
+      let concluido = false;
+      while (!concluido && tentativas < 3) {
+        tentativas += 1;
+        try {
+          const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
+          if (r.ok) {
+            ok += 1;
+            concluido = true;
+            atual = atual.map((e) => {
+              if (e.id !== alvo.id) return e;
+              // Monta um bloco com o que a Receita devolveu e que não tem
+              // campo próprio no cadastro (situação, natureza, porte, capital,
+              // endereço, sócios) — só entra em Observações se estiver vazia,
+              // pra nunca sobrepor anotação manual sua.
+              const extras = [
+                r.situacaoCadastral ? `Situação cadastral: ${r.situacaoCadastral}` : null,
+                r.naturezaJuridica ? `Natureza jurídica: ${r.naturezaJuridica}` : null,
+                r.porte ? `Porte: ${r.porte}` : null,
+                r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
+                r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
+                r.endereco ? `Endereço: ${r.endereco}` : null,
+                r.socios ? `Sócios: ${r.socios}` : null,
+              ].filter((linha): linha is string => !!linha);
+              return {
+                ...e,
+                uf: e.uf || r.uf || undefined,
+                setor: e.setor || r.setor || undefined,
+                regime: e.regime || r.regime || undefined,
+                telefone: e.telefone || r.telefone || undefined,
+                email: e.email || r.email || undefined,
+                razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
+                observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
+              };
+            });
+          } else if (r.erro?.includes("429") && tentativas < 3) {
+            // Limite de requisições excedido — espera mais e tenta de novo.
+            setProgressoEnriquecimento(
+              `${i + 1}/${alvos.length} · ${alvo.nome} (aguardando limite da API…)`,
+            );
+            await aguardar(4000 * tentativas);
+          } else {
+            falhas += 1;
+            concluido = true;
+            console.error(`Enriquecimento falhou — ${alvo.nome} (${alvo.cnpj}):`, r.erro);
+            if (!errosVistos.includes(r.erro)) errosVistos.push(r.erro);
+          }
+        } catch (err) {
           falhas += 1;
-          console.error(`Enriquecimento falhou — ${alvo.nome} (${alvo.cnpj}):`, r.erro);
-          if (!errosVistos.includes(r.erro)) errosVistos.push(r.erro);
+          concluido = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`Enriquecimento falhou (exceção) — ${alvo.nome} (${alvo.cnpj}):`, err);
+          if (!errosVistos.includes(msg)) errosVistos.push(msg);
         }
-      } catch (err) {
-        falhas += 1;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`Enriquecimento falhou (exceção) — ${alvo.nome} (${alvo.cnpj}):`, err);
-        if (!errosVistos.includes(msg)) errosVistos.push(msg);
       }
     }
     persist(atual);
