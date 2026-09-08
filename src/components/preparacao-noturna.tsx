@@ -37,6 +37,7 @@ import {
   ETAPAS,
   ETAPA_LABEL,
   etapaDaEmpresa,
+  cnpjValido,
   type EtapaPipeline,
 } from "@/lib/pipeline-preparacao";
 import { scoreEmpresas } from "@/lib/lead-score";
@@ -1358,134 +1359,132 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               )}
             </div>
 
-            {/* Esteira: Descobrir → Validar → Enriquecer → Pontuar */}
-            <div className="flex flex-wrap items-center gap-2 border-b border-hub-line/50 bg-hub-surface/20 px-6 py-3">
-              <span className="mr-1 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
-                Esteira
-              </span>
-              {ETAPAS.map((etapa, i) => {
-                const ativo = filtroEtapa === etapa.id;
-                return (
-                  <div key={etapa.id} className="flex items-center gap-2">
-                    {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-hub-muted/60" />}
+            {/* Barra unificada: esteira (filtro rápido por etapa) + busca/filtros + enriquecer */}
+            <div className="space-y-3 border-b border-hub-line/50 bg-hub-surface/30 px-6 py-3">
+              {/* Linha 1 — esteira, compacta */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ETAPAS.map((etapa) => {
+                  const ativo = filtroEtapa === etapa.id;
+                  return (
                     <button
+                      key={etapa.id}
                       type="button"
                       title={etapa.ajuda}
                       onClick={() => setFiltroEtapa(ativo ? "" : etapa.id)}
                       className={
-                        "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] font-bold transition " +
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition " +
                         (ativo
                           ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
                           : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
                       }
                     >
                       {etapa.label}
-                      <span className="rounded-full bg-hub-raised px-2 py-0.5 text-[10px] text-hub-text">
+                      <span className="rounded-full bg-hub-raised px-1.5 py-0.5 text-[10px] text-hub-text">
                         {etapaContagem[etapa.id]}
                       </span>
                     </button>
-                  </div>
-                );
-              })}
-              {filtroEtapa && (
-                <button
-                  type="button"
-                  onClick={() => setFiltroEtapa("")}
-                  className="text-[11px] font-medium text-hub-muted underline hover:text-hub-gold"
-                >
-                  Ver todas as etapas
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void navigate({ to: "/descobrir" })}
-                title="Buscar empresas novas por cidade e tipo de negócio"
-                className="ml-auto flex items-center gap-1.5 rounded-xl border border-hub-line/50 bg-hub-surface px-3 py-1.5 text-[11px] font-bold text-hub-text transition hover:border-hub-gold/50 hover:text-hub-gold"
-              >
-                <Search className="h-3.5 w-3.5" />
-                Descobrir empresas novas
-              </button>
-            </div>
-
-            {/* Filtros */}
-            <div className="flex flex-wrap items-center gap-3 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
-              <div className="relative min-w-[220px] flex-1">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-hub-muted" />
-                <input
-                  value={filtroBusca}
-                  onChange={(ev) => setFiltroBusca(ev.target.value)}
-                  placeholder="Buscar por Razão Social ou CNPJ..."
-                  className="w-full rounded-xl border border-hub-line/60 bg-hub-surface py-2.5 pl-10 pr-4 text-sm text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
-                />
-              </div>
-              <select
-                value={filtroStatus}
-                onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
-                title="Filtrar por status"
-                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="">Todas</option>
-                <option value="pending">Pendentes</option>
-                <option value="realizada">Realizadas</option>
-                <option value="sem_interesse">Sem interesse</option>
-              </select>
-              <select
-                value={filtroUf}
-                onChange={(ev) => setFiltroUf(ev.target.value)}
-                title="Filtrar por UF"
-                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="">Todas UF</option>
-                {ufsDisponiveis.map((uf) => (
-                  <option key={uf} value={uf}>{uf}</option>
-                ))}
-              </select>
-              <select
-                value={filtroSetor}
-                onChange={(ev) => setFiltroSetor(ev.target.value)}
-                title="Filtrar por setor"
-                className="max-w-[180px] rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="">Todos os setores</option>
-                {setoresDisponiveis.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-              <select
-                value={filtroRegime}
-                onChange={(ev) => setFiltroRegime(ev.target.value)}
-                title="Filtrar por regime tributário"
-                className="rounded-xl border border-hub-line/60 bg-hub-surface px-3 py-2.5 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="">Todos os regimes</option>
-                {REGIMES.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-                <option value="nao_informado">Não informado</option>
-              </select>
-              {filtrosAtivos && (
-                <button
-                  type="button"
-                  onClick={limparFiltros}
-                  className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
-                >
-                  Limpar filtros
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={enriquecendo}
-                onClick={() => void enriquecerCnpjs()}
-                title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
-                className="ml-auto flex items-center gap-2 rounded-xl bg-hub-raised px-4 py-2.5 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
-              >
-                {enriquecendo ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4 text-hub-gold" />
+                  );
+                })}
+                {filtroEtapa && (
+                  <button
+                    type="button"
+                    onClick={() => setFiltroEtapa("")}
+                    className="text-[11px] font-medium text-hub-muted underline hover:text-hub-gold"
+                  >
+                    limpar
+                  </button>
                 )}
-                {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void navigate({ to: "/descobrir" })}
+                  title="Buscar empresas novas por cidade e tipo de negócio"
+                  className="ml-auto flex items-center gap-1.5 rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 text-[11px] font-bold text-hub-text transition hover:border-hub-gold/50 hover:text-hub-gold"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  Descobrir empresas novas
+                </button>
+              </div>
+
+              {/* Linha 2 — busca, filtros e enriquecer */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="relative min-w-[200px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-hub-muted" />
+                  <input
+                    value={filtroBusca}
+                    onChange={(ev) => setFiltroBusca(ev.target.value)}
+                    placeholder="Buscar por Razão Social ou CNPJ..."
+                    className="w-full rounded-lg border border-hub-line/60 bg-hub-surface py-2 pl-9 pr-3 text-[13px] text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
+                  />
+                </div>
+                <select
+                  value={filtroStatus}
+                  onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
+                  title="Filtrar por status"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todas</option>
+                  <option value="pending">Pendentes</option>
+                  <option value="realizada">Realizadas</option>
+                  <option value="sem_interesse">Sem interesse</option>
+                </select>
+                <select
+                  value={filtroUf}
+                  onChange={(ev) => setFiltroUf(ev.target.value)}
+                  title="Filtrar por UF"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todas UF</option>
+                  {ufsDisponiveis.map((uf) => (
+                    <option key={uf} value={uf}>{uf}</option>
+                  ))}
+                </select>
+                <select
+                  value={filtroSetor}
+                  onChange={(ev) => setFiltroSetor(ev.target.value)}
+                  title="Filtrar por setor"
+                  className="max-w-[160px] rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todos os setores</option>
+                  {setoresDisponiveis.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <select
+                  value={filtroRegime}
+                  onChange={(ev) => setFiltroRegime(ev.target.value)}
+                  title="Filtrar por regime tributário"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todos os regimes</option>
+                  {REGIMES.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                  <option value="nao_informado">Não informado</option>
+                </select>
+                {filtrosAtivos && (
+                  <button
+                    type="button"
+                    onClick={limparFiltros}
+                    className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={enriquecendo}
+                  onClick={() => void enriquecerCnpjs()}
+                  title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+                  className="ml-auto flex items-center gap-2 rounded-lg bg-hub-raised px-3.5 py-2 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
+                >
+                  {enriquecendo ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4 text-hub-gold" />
+                  )}
+                  {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+                </button>
+              </div>
             </div>
 
             {/* Lista */}
@@ -1601,43 +1600,44 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                               </span>
                             )}
                             {(() => {
+                              const cnpjOk = cnpjValido(e.cnpj);
+                              const dadosOk = !!(e.uf && e.setor);
                               const sc = scoreDaEmpresa(e);
-                              const etapa = etapaDaEmpresa(e, sc);
+                              const ligacaoOk = typeof sc === "number";
                               return (
-                                <>
-                                  <span
-                                    className="shrink-0 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-muted"
-                                    title="Etapa da esteira"
-                                  >
-                                    {ETAPA_LABEL[etapa]}
-                                  </span>
-                                  {typeof sc === "number" && (
-                                    <span
-                                      className="shrink-0 rounded-lg bg-hub-gold/10 px-2.5 py-1 text-[11px] font-bold text-hub-gold"
-                                      title="Pontuação de prioridade (mesma do ranking do Painel Executivo)"
-                                    >
+                                <span
+                                  className="flex shrink-0 items-center gap-2 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1"
+                                  title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
+                                >
+                                  {cnpjOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {dadosOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {ligacaoOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {ligacaoOk && (
+                                    <span className="ml-1 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[11px] font-bold text-hub-gold">
                                       {sc}
                                     </span>
                                   )}
-                                </>
+                                </span>
                               );
                             })()}
-                            {e.setor && (
-                              <span
-                                className="hidden max-w-[160px] shrink-0 truncate rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold text-hub-muted sm:inline-block"
-                                title={e.setor}
-                              >
-                                {e.setor}
-                              </span>
-                            )}
                             {e.uf && (
-                              <span className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted" title="UF">
+                              <span
+                                className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted"
+                                title={[e.uf, e.setor, e.regime].filter(Boolean).join(" · ") || "UF"}
+                              >
                                 {e.uf}
-                              </span>
-                            )}
-                            {e.regime && (
-                              <span className="hidden shrink-0 text-[11px] font-medium text-hub-muted lg:inline" title="Regime tributário">
-                                {e.regime}
                               </span>
                             )}
                             {recusado ? (
