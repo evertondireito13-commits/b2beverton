@@ -432,6 +432,9 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [list, setList] = useState<Empresa[]>([]);
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftText, setDraftText] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importando, setImportando] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingEmpresa, setEditingEmpresa] = useState<Empresa | null>(null);
   const [aba, setAba] = useState<"ativas" | "sem_interesse">("ativas");
@@ -887,17 +890,21 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     setFiltroEtapa("");
   }
 
-  /** Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI. */
-  async function enriquecerCnpjs() {
-    const alvos = list.filter(
+  /**
+   * Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI,
+   * a partir de uma lista específica (usado tanto pelo botão manual quanto
+   * pela importação por CNPJ, que dispara isso sozinha logo após cadastrar).
+   */
+  async function enriquecerListaCnpjs(baseList: Empresa[]) {
+    const alvos = baseList.filter(
       (e) => cnpjDigitos(e.cnpj).length === 14 && (!e.uf || !e.setor || !e.regime),
     );
     if (alvos.length === 0) {
       toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
-      return;
+      return baseList;
     }
     setEnriquecendo(true);
-    let atual = [...list];
+    let atual = [...baseList];
     let ok = 0;
     let falhas = 0;
     const errosVistos: string[] = [];
@@ -954,6 +961,83 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         (falhas > 0 ? ` · ${falhas} falharam (${errosVistos.slice(0, 2).join("; ")})` : "") +
         ". Campos preenchidos manualmente foram preservados.",
     );
+    return atual;
+  }
+
+  /** Preenche UF/setor/regime (apenas campos vazios) da lista atual, consultando a BrasilAPI. */
+  async function enriquecerCnpjs() {
+    await enriquecerListaCnpjs(list);
+  }
+
+  /**
+   * Importação em massa: você cola "Nome - CNPJ" (ou só o CNPJ) uma linha por
+   * empresa. Cria todas de uma vez, ignora CNPJ já cadastrado (evita duplicar)
+   * e, ao final, já dispara o enriquecimento automático — sem precisar clicar
+   * em "Enriquecer via CNPJ" depois.
+   */
+  async function confirmarImportacao() {
+    const linhas = importText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (linhas.length === 0) {
+      toast.error("Cole ao menos uma linha com nome e CNPJ.");
+      return;
+    }
+    setImportando(true);
+    try {
+      const existentes = new Set(
+        list.map((e) => cnpjDigitos(e.cnpj)).filter((d) => d.length === 14),
+      );
+      const novas: Empresa[] = [];
+      let duplicadas = 0;
+      let semCnpj = 0;
+      for (const linha of linhas) {
+        const match = linha.match(/(\d[\d.\-/]{10,}\d)/);
+        const cnpjDig = match ? match[1].replace(/\D/g, "") : "";
+        if (cnpjDig.length !== 14) {
+          semCnpj += 1;
+          continue;
+        }
+        if (existentes.has(cnpjDig) || novas.some((n) => cnpjDigitos(n.cnpj) === cnpjDig)) {
+          duplicadas += 1;
+          continue;
+        }
+        const nome =
+          (match ? linha.replace(match[0], "") : linha)
+            .replace(/^[\s\-–,:]+|[\s\-–,:]+$/g, "")
+            .trim() || cnpjDig;
+        novas.push({
+          id: newId(),
+          nome,
+          textoBruto: linha,
+          status: "pending",
+          cnpj: match![1],
+        });
+        existentes.add(cnpjDig);
+      }
+      if (novas.length === 0) {
+        toast.error(
+          "Nenhum CNPJ válido novo encontrado" +
+            (duplicadas > 0 ? ` (${duplicadas} já estavam cadastrados)` : "") +
+            ".",
+        );
+        return;
+      }
+      const merged = [...list, ...novas];
+      persist(merged);
+      toast.success(
+        `${novas.length} empresa(s) cadastrada(s)` +
+          (duplicadas > 0 ? ` · ${duplicadas} já existia(m)` : "") +
+          (semCnpj > 0 ? ` · ${semCnpj} linha(s) sem CNPJ válido` : "") +
+          ". Buscando os dados automaticamente…",
+      );
+      setImportText("");
+      setImportOpen(false);
+      await enriquecerListaCnpjs(merged);
+    } finally {
+      setImportando(false);
+    }
   }
 
   /** Reordena manualmente e persiste a nova ordem da lista do dia. */
@@ -973,6 +1057,73 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   }
   const pendentes = ativas.filter((e) => e.status !== "realizada").length;
   const realizadas = ativas.length - pendentes;
+
+  const importDialog = (
+    <Dialog
+      open={importOpen}
+      onOpenChange={(v) => {
+        if (!v && !importando) {
+          setImportText("");
+          setImportOpen(false);
+        } else if (v) {
+          setImportOpen(true);
+        }
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-navy-deep">
+            <Sparkles className="h-4 w-4" />
+            Importar empresas por CNPJ
+          </DialogTitle>
+          <DialogDescription>
+            Cole uma empresa por linha — nome e CNPJ (ou só o CNPJ). Assim que cadastrar, o
+            sistema já busca sozinho telefone, e-mail, UF, setor, regime, sócios e endereço —
+            sem precisar clicar em "Enriquecer via CNPJ" depois. CNPJs repetidos são ignorados
+            automaticamente.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Uma empresa por linha
+          </Label>
+          <Textarea
+            autoFocus
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={12}
+            placeholder={`Ex.:\nMetalúrgica Paraná LTDA - 00.000.000/0001-00\nIndústria Sul Comércio - 11.111.111/0001-11\n22.222.222/0001-22`}
+            className="min-h-[240px] font-mono text-sm leading-relaxed"
+          />
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setImportText("");
+              setImportOpen(false);
+            }}
+            disabled={importando}
+          >
+            <X className="mr-1 h-4 w-4" />
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => void confirmarImportacao()}
+            disabled={importando || !importText.trim()}
+            className="gap-1 bg-emerald-600 text-white hover:bg-emerald-700"
+          >
+            {importando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            {importando ? (progressoEnriquecimento ?? "Importando…") : "Importar e buscar dados"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   const cadastroDialog = (
     <Dialog
@@ -1172,13 +1323,23 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 className="w-[130px] bg-transparent pr-1 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
               />
             </div>
-            <Button
-              onClick={() => setDraftOpen(true)}
-              className="gap-2 rounded-xl bg-hub-gold px-4 py-2 text-sm font-bold text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
-            >
-              <Plus className="h-4 w-4" />
-              Cadastrar Empresa
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setImportOpen(true)}
+                className="gap-2 rounded-xl border-hub-line bg-hub-surface px-4 py-2 text-sm font-bold text-hub-text shadow-sm transition hover:border-hub-gold/50 hover:text-hub-gold"
+              >
+                <Sparkles className="h-4 w-4" />
+                Importar por CNPJ
+              </Button>
+              <Button
+                onClick={() => setDraftOpen(true)}
+                className="gap-2 rounded-xl bg-hub-gold px-4 py-2 text-sm font-bold text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+              >
+                <Plus className="h-4 w-4" />
+                Cadastrar Empresa
+              </Button>
+            </div>
           </div>
         </header>
 
@@ -1791,6 +1952,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </div>
         )}
 
+        {importDialog}
         {cadastroDialog}
         {editDialog}
         {grupoDialog}
@@ -1921,6 +2083,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         </ul>
       )}
 
+      {importDialog}
       {cadastroDialog}
       {editDialog}
         {grupoDialog}
