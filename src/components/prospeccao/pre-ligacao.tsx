@@ -208,6 +208,8 @@ export function PreLigacao({
       // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
       // impediria os dados da nova empresa de aparecerem.
       limparRascunhoPre();
+      clearRascunho(); // garante que o rascunho da Pós-ligação também é limpo,
+                        // mesmo que aquela aba não esteja montada agora
       setCurrentLeadState(null);
       setContingenciaAtiva(false);
       dadosDirtyRef.current = false;
