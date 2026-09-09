@@ -165,6 +165,17 @@ export function PosLigacao({
   const [lastRegCargo, setLastRegCargo] = useState<string>(rascunhoPos.lastRegCargo ?? "");
   const [loading, setLoading] = useState(false);
 
+  // Confirmação de arquivamento ("sem interesse"): guarda os dados da empresa
+  // + motivo sugerido pela IA. Só arquivamos de verdade (some da esteira e
+  // vira "perdido" na Central) depois que o operador CONFIRMA neste diálogo.
+  const [arquivarConfirm, setArquivarConfirm] = useState<{
+    prepId: string | null;
+    empresaNome: string;
+    cnpj: string | null;
+    motivo: string;
+  } | null>(null);
+  const [motivoEdit, setMotivoEdit] = useState("");
+
   useEffect(() => {
     updateRascunho({
       pos: {
@@ -262,6 +273,32 @@ export function PosLigacao({
     setActiveLeadState(null);
     toast.success("Tudo limpo. Pronto para uma nova ligação.");
   }
+
+  // Nova empresa chegando do Preparação Noturna (esteira "Descobrir →
+  // Validar → Enriquecer → Pontuar"): limpa TUDO o que sobrou da ligação
+  // anterior aqui no pós-ligação — histórico gerado, análise, card de
+  // empresa/contato/cargo e qualquer confirmação de arquivamento pendente.
+  // Sem isso, o dado da empresa antiga ficava em cima do da nova na tela.
+  useEffect(() => {
+    function onNovaEmpresa() {
+      limparRascunhoPos();
+      setAnalise(null);
+      setAnaliseAvancada(null);
+      setHistoricoOpen(true);
+      meetingAtRef.current = null;
+      meetingEmailRef.current = null;
+      originFollowUpIdRef.current = null;
+      setArquivarConfirm(null);
+    }
+    window.addEventListener(LOAD_PRE_LIGACAO_EVENT, onNovaEmpresa);
+    return () => window.removeEventListener(LOAD_PRE_LIGACAO_EVENT, onNovaEmpresa);
+  }, []);
+
+  // Mantém o campo de motivo (editável) sincronizado com a sugestão da IA
+  // toda vez que uma nova confirmação de arquivamento é aberta.
+  useEffect(() => {
+    if (arquivarConfirm) setMotivoEdit(arquivarConfirm.motivo);
+  }, [arquivarConfirm]);
 
   // Chave anti-duplicação por lead — enquanto o operador não trocar de CNPJ,
   // qualquer clique em checkbox/enviar reaproveita a mesma linha.
@@ -744,24 +781,8 @@ export function PosLigacao({
           reg.resultado = reg.resultado ?? (analiseIa.resumo_executivo || null);
         }
 
-        // CORREÇÃO (Problema 2 — "sem interesse" não arquivava de verdade):
-        // a classificação da IA (interpretacao.status) às vezes não retorna
-        // "arquivado" mesmo quando o texto contém uma negativa comercial
-        // explícita ("sem interesse", "não tem interesse" etc). O detector
-        // textoIndicaNegativaComercial já era usado como rede de segurança
-        // em outros dois pontos (cancelar follow-up e marcar lead como
-        // "perdido" na Central) — mas NÃO entrava na decisão de histStatus,
-        // que é o que efetivamente tira a empresa da fila ativa. Por isso a
-        // empresa continuava "ativa" mesmo depois de registrada como sem
-        // interesse. Agora os dois critérios decidem juntos, uma única vez.
-        const negativaDetectada = textoIndicaNegativaComercial(`${descricao}\n${text}`);
         const s = interpretacao.status;
-        const histStatus =
-          s === "arquivado" || negativaDetectada
-            ? "arquivado"
-            : s === "reuniao"
-            ? "concluido"
-            : "pendente";
+        const histStatus = s === "arquivado" ? "arquivado" : s === "reuniao" ? "concluido" : "pendente";
 
         saveHistorico(reg);
         // Persistência opcional da análise de dinâmica (tabela separada).
@@ -785,22 +806,32 @@ export function PosLigacao({
           const prepId = window.sessionStorage.getItem(ACTIVE_PREPARATION_ID_KEY);
           if (prepId) window.sessionStorage.removeItem(ACTIVE_PREPARATION_ID_KEY);
           // Classifica o desfecho: sem interesse (vermelho) x em andamento (verde)
-          const semInteresse = s === "arquivado" || negativaDetectada;
-          if (prepId) {
-            window.dispatchEvent(
-              new CustomEvent(PREPARACAO_REALIZADA_EVENT, {
-                detail: {
-                  preparationId: prepId,
-                  outcome: semInteresse ? "sem_interesse" : "realizada",
-                },
-              }),
-            );
+          const semInteresse =
+            s === "arquivado" || textoIndicaNegativaComercial(`${descricao}\n${text}`);
+          if (semInteresse) {
+            // NÃO arquiva sozinho: pede confirmação do operador (com motivo)
+            // antes de tirar a empresa da esteira do Preparação e marcar o
+            // lead como perdido na Central de Reuniões.
+            const motivoSugerido =
+              (analiseIa?.objecoes_encontradas?.join("; ") || "").trim() ||
+              reg.resultado ||
+              "Empresa sinalizou que não tem interesse durante a ligação.";
+            setArquivarConfirm({
+              prepId,
+              empresaNome: reg.empresaNome ?? "Empresa",
+              cnpj: reg.cnpj ?? null,
+              motivo: motivoSugerido,
+            });
+          } else {
+            if (prepId) {
+              window.dispatchEvent(
+                new CustomEvent(PREPARACAO_REALIZADA_EVENT, {
+                  detail: { preparationId: prepId, outcome: "realizada" },
+                }),
+              );
+            }
+            markPreparacaoRealizadaByCompany(reg.cnpj ?? null, reg.empresaNome ?? null, "realizada");
           }
-          markPreparacaoRealizadaByCompany(
-            reg.cnpj ?? null,
-            reg.empresaNome ?? null,
-            semInteresse ? "sem_interesse" : "realizada",
-          );
         } catch { /* noop */ }
 
         // Fonte única do Centro de Estratégia: registra também na chave
@@ -894,25 +925,12 @@ export function PosLigacao({
               `Falha ao mover empresa para a Central de Reuniões: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
-
-        } else if (s === "arquivado" || negativaDetectada) {
-          // Regra de transição inversa: recusa explícita => lead ativo na Central vira "perdido".
-          try {
-            const leadAtivo = findLead(reg.empresaNome, reg.cnpj ?? null);
-            if (leadAtivo && leadAtivo.status !== "perdido") {
-              upsertLeadCentral({
-                empresa: reg.empresaNome,
-                cnpj: reg.cnpj ?? "",
-                status: "perdido",
-                em_followup_frio: false,
-                ultima_observacao: reg.resultado ?? "Recusa explícita registrada na pós-ligação.",
-              });
-              toast.info("Recusa detectada — lead marcado como perdido na Central de Reuniões.");
-            }
-          } catch {
-            /* não bloqueia geração */
-          }
         }
+        // Recusa explícita ("sem interesse") NÃO marca mais o lead como
+        // "perdido" automaticamente aqui — isso agora só acontece depois que
+        // o operador CONFIRMA o arquivamento no diálogo (ver
+        // confirmarArquivamento, disparado pelo bloco acima via
+        // setArquivarConfirm).
 
       } catch {
         /* não bloqueia */
@@ -922,6 +940,57 @@ export function PosLigacao({
       toast.error(err instanceof Error ? err.message : "Falha na IA");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Confirma o arquivamento: some da esteira do Preparação (outcome
+  // "sem_interesse") e marca o lead como "perdido" na Central, com o motivo
+  // que o operador revisou/editou no diálogo.
+  function confirmarArquivamento() {
+    if (!arquivarConfirm) return;
+    const { prepId, empresaNome, cnpj, motivo } = arquivarConfirm;
+    const motivoFinal = motivoEdit.trim() || motivo;
+    try {
+      if (prepId) {
+        window.dispatchEvent(
+          new CustomEvent(PREPARACAO_REALIZADA_EVENT, {
+            detail: { preparationId: prepId, outcome: "sem_interesse" },
+          }),
+        );
+      }
+      markPreparacaoRealizadaByCompany(cnpj, empresaNome, "sem_interesse");
+      upsertLeadCentral({
+        empresa: empresaNome,
+        cnpj: cnpj ?? "",
+        status: "perdido",
+        em_followup_frio: false,
+        ultima_observacao: motivoFinal,
+      });
+      toast.success(`${empresaNome} arquivada — "${motivoFinal}".`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao arquivar empresa");
+    } finally {
+      setArquivarConfirm(null);
+    }
+  }
+
+  // Cancela o arquivamento: mantém a empresa no fluxo normal (marcada como
+  // "realizada", igual a qualquer ligação concluída sem recusa).
+  function cancelarArquivamento() {
+    if (!arquivarConfirm) return;
+    const { prepId, empresaNome, cnpj } = arquivarConfirm;
+    try {
+      if (prepId) {
+        window.dispatchEvent(
+          new CustomEvent(PREPARACAO_REALIZADA_EVENT, {
+            detail: { preparationId: prepId, outcome: "realizada" },
+          }),
+        );
+      }
+      markPreparacaoRealizadaByCompany(cnpj, empresaNome, "realizada");
+      toast.info("Arquivamento cancelado — empresa mantida na esteira normalmente.");
+    } finally {
+      setArquivarConfirm(null);
     }
   }
 
@@ -962,304 +1031,345 @@ export function PosLigacao({
 
 
   return (
-    <Card className="relative overflow-hidden border-border bg-card p-0 shadow-sm">
-      <CardHeader className="flex flex-col items-start gap-2 space-y-0 rounded-none border-b border-navy-deep bg-navy-deep px-4 py-4 text-white sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6">
-        <CardTitle className="font-display text-base tracking-wide text-white sm:text-lg">
-          Pós-ligação · Histórico da ligação
-        </CardTitle>
-        <div className="flex flex-wrap items-center gap-3" />
-      </CardHeader>
-      <CardContent className="space-y-3 p-6">
-        <PromptLibraryPanel tipo="historico" />
+    <>
+      <Card className="relative overflow-hidden border-border bg-card p-0 shadow-sm">
+        <CardHeader className="flex flex-col items-start gap-2 space-y-0 rounded-none border-b border-navy-deep bg-navy-deep px-4 py-4 text-white sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-6">
+          <CardTitle className="font-display text-base tracking-wide text-white sm:text-lg">
+            Pós-ligação · Histórico da ligação
+          </CardTitle>
+          <div className="flex flex-wrap items-center gap-3" />
+        </CardHeader>
+        <CardContent className="space-y-3 p-6">
+          <PromptLibraryPanel tipo="historico" />
 
 
 
 
-        {pendingAudios.length > 0 && (
-          <div className="space-y-2 rounded-md border border-primary/40 bg-primary/5 p-3">
-            <p className="text-xs font-semibold text-primary">
-              🎧 {pendingAudios.length > 1
-                ? `${pendingAudios.length} gravações prontas`
-                : "Áudio da chamada pronto"}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              A transcrição começa automaticamente. O áudio continua disponível
-              aqui (ouvir e baixar) até você descartar manualmente.
-            </p>
-            {pendingAudios.map((a, i) => {
-              const jaTranscrito = transcritos.includes(a.id);
-              return (
-              <div key={a.id} className="rounded-md border border-primary/20 bg-background/60 p-2">
-                <p className="text-[11px] font-medium">
-                  {pendingAudios.length > 1 ? `Tentativa ${i + 1} — ` : ""}
-                  {new Date(a.gravadoEm).toLocaleTimeString("pt-BR", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}{" "}
-                  ({formatSecs(a.duracaoSeg)})
-                  {a.empresa ? ` — ${a.empresa}` : ""}
-                </p>
-                <audio controls className="mt-2 w-full" src={audioUrls[a.id]} />
-                <div className="mt-2 flex flex-wrap items-center gap-1">
-                  {jaTranscrito ? (
-                    <span className="rounded-md bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">
-                      ✓ Transcrito
-                    </span>
-                  ) : (
-                    <Button
-                      size="sm"
-                      disabled={transcribing}
-                      onClick={async () => {
-                        const ok = await transcribeBlob(a.blob, a.filename);
-                        if (ok) setTranscritos((prev) => (prev.includes(a.id) ? prev : [...prev, a.id]));
-                      }}
-                    >
-                      {transcribing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-                      Transcrever com IA
+          {pendingAudios.length > 0 && (
+            <div className="space-y-2 rounded-md border border-primary/40 bg-primary/5 p-3">
+              <p className="text-xs font-semibold text-primary">
+                🎧 {pendingAudios.length > 1
+                  ? `${pendingAudios.length} gravações prontas`
+                  : "Áudio da chamada pronto"}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                A transcrição começa automaticamente. O áudio continua disponível
+                aqui (ouvir e baixar) até você descartar manualmente.
+              </p>
+              {pendingAudios.map((a, i) => {
+                const jaTranscrito = transcritos.includes(a.id);
+                return (
+                <div key={a.id} className="rounded-md border border-primary/20 bg-background/60 p-2">
+                  <p className="text-[11px] font-medium">
+                    {pendingAudios.length > 1 ? `Tentativa ${i + 1} — ` : ""}
+                    {new Date(a.gravadoEm).toLocaleTimeString("pt-BR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}{" "}
+                    ({formatSecs(a.duracaoSeg)})
+                    {a.empresa ? ` — ${a.empresa}` : ""}
+                  </p>
+                  <audio controls className="mt-2 w-full" src={audioUrls[a.id]} />
+                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                    {jaTranscrito ? (
+                      <span className="rounded-md bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">
+                        ✓ Transcrito
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={transcribing}
+                        onClick={async () => {
+                          const ok = await transcribeBlob(a.blob, a.filename);
+                          if (ok) setTranscritos((prev) => (prev.includes(a.id) ? prev : [...prev, a.id]));
+                        }}
+                      >
+                        {transcribing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+                        Transcrever com IA
+                      </Button>
+                    )}
+                    {audioUrls[a.id] ? (
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={audioUrls[a.id]} download={a.filename}>
+                          Baixar áudio
+                        </a>
+                      </Button>
+                    ) : null}
+                    <Button size="sm" variant="ghost" onClick={() => clearPendingAudio(a.id)}>
+                      Descartar áudio
                     </Button>
-                  )}
-                  {audioUrls[a.id] ? (
-                    <Button size="sm" variant="outline" asChild>
-                      <a href={audioUrls[a.id]} download={a.filename}>
-                        Baixar áudio
-                      </a>
-                    </Button>
-                  ) : null}
-                  <Button size="sm" variant="ghost" onClick={() => clearPendingAudio(a.id)}>
-                    Descartar áudio
-                  </Button>
+                  </div>
                 </div>
-              </div>
-              );
-            })}
-          </div>
-        )}
-
-
-        {/* Contexto do lead ativo. Os campos "Falou com decisor / portaria",
-            "Nome do contato" e "Cargo" foram REMOVIDOS: a IA extrai isso
-            automaticamente do texto livre quando você clica "Gerar histórico"
-            e alimenta o Diário e a Taxa de Decisor sozinha. */}
-        <div className="rounded-md border border-navy-deep/30 bg-navy-deep/[0.03] p-3 text-[11px] text-muted-foreground">
-          {activeLead ? (
-            <>
-              Lead ativo:{" "}
-              <strong className="text-navy-deep">
-                {activeLead.razaoSocial || activeLead.nomeFantasia || activeLead.cnpj}
-              </strong>
-              . Ao gerar o histórico, a IA identifica contato, cargo e se você
-              falou com decisor ou portaria e atualiza o Diário automaticamente.
-            </>
-          ) : (
-            "Nenhum lead ativo. Busque um CNPJ na Pré-ligação para que esta ligação entre no Diário."
+                );
+              })}
+            </div>
           )}
-        </div>
 
 
-        <div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label htmlFor="descricao" className="text-xs">
-              Descrição da ligação
-            </Label>
-            <div className="flex flex-wrap items-center gap-1">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="audio/*"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={transcribing || recording}
-                className="h-6 px-2 text-xs"
-                title="Carregar arquivo de áudio para transcrever"
-              >
-                {transcribing && !recording ? (
-                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                ) : (
-                  <Upload className="mr-1 h-3 w-3" />
-                )}
-                Carregar áudio
-              </Button>
-              {recording ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  onClick={stopRecording}
-                  className="h-6 px-2 text-xs"
-                  title="Parar gravação e transcrever"
-                >
-                  <Square className="mr-1 h-3 w-3" />
-                  Parar ({Math.floor(recordingSecs / 60)}:{String(recordingSecs % 60).padStart(2, "0")})
-                </Button>
-              ) : (
+          {/* Contexto do lead ativo. Os campos "Falou com decisor / portaria",
+              "Nome do contato" e "Cargo" foram REMOVIDOS: a IA extrai isso
+              automaticamente do texto livre quando você clica "Gerar histórico"
+              e alimenta o Diário e a Taxa de Decisor sozinha. */}
+          <div className="rounded-md border border-navy-deep/30 bg-navy-deep/[0.03] p-3 text-[11px] text-muted-foreground">
+            {activeLead ? (
+              <>
+                Lead ativo:{" "}
+                <strong className="text-navy-deep">
+                  {activeLead.razaoSocial || activeLead.nomeFantasia || activeLead.cnpj}
+                </strong>
+                . Ao gerar o histórico, a IA identifica contato, cargo e se você
+                falou com decisor ou portaria e atualiza o Diário automaticamente.
+              </>
+            ) : (
+              "Nenhum lead ativo. Busque um CNPJ na Pré-ligação para que esta ligação entre no Diário."
+            )}
+          </div>
+
+
+          <div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="descricao" className="text-xs">
+                Descrição da ligação
+              </Label>
+              <div className="flex flex-wrap items-center gap-1">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
                 <Button
                   type="button"
                   size="sm"
                   variant="ghost"
-                  onClick={startRecording}
-                  disabled={transcribing}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={transcribing || recording}
                   className="h-6 px-2 text-xs"
-                  title="Gravar áudio pelo microfone e transcrever"
+                  title="Carregar arquivo de áudio para transcrever"
                 >
-                  <Mic className="mr-1 h-3 w-3" />
-                  Gravar
+                  {transcribing && !recording ? (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Upload className="mr-1 h-3 w-3" />
+                  )}
+                  Carregar áudio
                 </Button>
-              )}
-            </div>
-          </div>
-          <Textarea
-            id="descricao"
-            ref={descricaoTextareaRef}
-            value={descricao}
-            onChange={(e) => setDescricao(e.target.value)}
-            rows={10}
-            placeholder="A gravação do Nosso App será transcrita aqui automaticamente. Você também pode colar uma descrição ou carregar outro áudio."
-            className="mt-1 text-sm"
-          />
-          {transcribing && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
-              Transcrevendo áudio…
-            </p>
-          )}
-        </div>
-
-        <Button onClick={handleGenerate} disabled={loading} size="lg" className="h-12 w-full text-base font-semibold">
-          {loading ? (
-            <>
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Gerando...
-            </>
-          ) : (
-            <>
-              <Sparkles className="mr-2 h-5 w-5" />
-              Gerar histórico
-            </>
-          )}
-        </Button>
-
-
-        {historico && (
-
-          <Collapsible
-            open={historicoOpen}
-            onOpenChange={setHistoricoOpen}
-            className="rounded-md border bg-muted/30"
-          >
-            <div className="flex items-center justify-between gap-2 p-3">
-              <CollapsibleTrigger asChild>
-                <button className="flex flex-1 items-center gap-2 text-left text-xs font-medium hover:underline">
-                  <span>{historicoOpen ? "▼" : "▶"}</span>
-                  <span>Histórico gerado</span>
-                  <span className="text-muted-foreground">
-                    ({historicoOpen ? "clique para recolher" : "clique para expandir"})
-                  </span>
-                </button>
-              </CollapsibleTrigger>
-            </div>
-            {lastRegId && (
-              <div className="flex flex-wrap items-center gap-2 border-t bg-white/40 px-3 py-2 text-xs">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Empresa:
-                </span>
-                <span className="font-semibold text-navy-deep">
-                  <EditableCompanyName
-                    value={lastRegName}
-                    onSave={(nome) => {
-                      updateHistoricoEmpresa(lastRegId, nome);
-                      renameActivitiesByEmpresa(
-                        { cnpj: lastRegCnpj, empresaAntiga: lastRegName },
-                        nome,
-                      );
-                      setLastRegName(nome);
-                      toast.success("Nome da empresa atualizado.");
-                    }}
-                    emptyLabel="✏️ Digitar nome da empresa"
-                  />
-                </span>
-                <span className="flex items-center gap-1 border-l border-border/60 pl-2">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Contato:
-                  </span>
-                  <span className="text-navy-deep">
-                    <EditableCompanyName
-                      value={lastRegContato}
-                      onSave={(novo) => {
-                        updateHistoricoContatoCargo(lastRegId, { contato: novo });
-                        updateActivityContatoCargo({ contato: novo });
-                        setLastRegContato(novo);
-                        emitHistoricoUpdated();
-                        toast.success("Nome do contato atualizado.");
-                      }}
-                      emptyLabel="✏️ Adicionar nome do contato"
-                      placeholder="Nome do contato"
-                      title="Clique para editar o nome do contato"
-                    />
-                  </span>
-                </span>
-                <span className="flex items-center gap-1 border-l border-border/60 pl-2">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Cargo:
-                  </span>
-                  <span className="text-navy-deep">
-                    <EditableCompanyName
-                      value={lastRegCargo}
-                      onSave={(novo) => {
-                        updateHistoricoContatoCargo(lastRegId, { cargo: novo });
-                        updateActivityContatoCargo({ cargo: novo });
-                        setLastRegCargo(novo);
-                        emitHistoricoUpdated();
-                        toast.success("Cargo atualizado.");
-                      }}
-                      emptyLabel="✏️ Adicionar cargo"
-                      placeholder="Cargo"
-                      title="Clique para editar o cargo"
-                    />
-                  </span>
-                </span>
-                <span className="ml-auto flex flex-wrap items-center gap-1">
-                  <Button size="sm" variant="ghost" onClick={copyHistorico} title="Copiar anotação completa para o CRM">
-                    <Copy className="mr-1 h-3 w-3" />
-                    Anotação
+                {recording ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    onClick={stopRecording}
+                    className="h-6 px-2 text-xs"
+                    title="Parar gravação e transcrever"
+                  >
+                    <Square className="mr-1 h-3 w-3" />
+                    Parar ({Math.floor(recordingSecs / 60)}:{String(recordingSecs % 60).padStart(2, "0")})
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={copyTelefones} title="Copiar apenas telefones e ramais">
-                    Telefones
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={startRecording}
+                    disabled={transcribing}
+                    className="h-6 px-2 text-xs"
+                    title="Gravar áudio pelo microfone e transcrever"
+                  >
+                    <Mic className="mr-1 h-3 w-3" />
+                    Gravar
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={copyEmailsPessoas} title="Copiar apenas e-mails e pessoas para procurar">
-                    E-mails
-                  </Button>
-                </span>
+                )}
               </div>
+            </div>
+            <Textarea
+              id="descricao"
+              ref={descricaoTextareaRef}
+              value={descricao}
+              onChange={(e) => setDescricao(e.target.value)}
+              rows={10}
+              placeholder="A gravação do Nosso App será transcrita aqui automaticamente. Você também pode colar uma descrição ou carregar outro áudio."
+              className="mt-1 text-sm"
+            />
+            {transcribing && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+                Transcrevendo áudio…
+              </p>
             )}
-            <CollapsibleContent className="border-t px-3 pb-3 pt-3">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                {historico}
-              </pre>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-                <button
-                  type="button"
-                  onClick={() => setHistoricoOpen(false)}
-                  className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:underline"
-                >
-                  <span>▲</span>
-                  <span>Recolher histórico</span>
-                </button>
+          </div>
+
+          <Button onClick={handleGenerate} disabled={loading} size="lg" className="h-12 w-full text-base font-semibold">
+            {loading ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Gerando...
+              </>
+            ) : (
+              <>
+                <Sparkles className="mr-2 h-5 w-5" />
+                Gerar histórico
+              </>
+            )}
+          </Button>
+
+
+          {historico && (
+
+            <Collapsible
+              open={historicoOpen}
+              onOpenChange={setHistoricoOpen}
+              className="rounded-md border bg-muted/30"
+            >
+              <div className="flex items-center justify-between gap-2 p-3">
+                <CollapsibleTrigger asChild>
+                  <button className="flex flex-1 items-center gap-2 text-left text-xs font-medium hover:underline">
+                    <span>{historicoOpen ? "▼" : "▶"}</span>
+                    <span>Histórico gerado</span>
+                    <span className="text-muted-foreground">
+                      ({historicoOpen ? "clique para recolher" : "clique para expandir"})
+                    </span>
+                  </button>
+                </CollapsibleTrigger>
               </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
+              {lastRegId && (
+                <div className="flex flex-wrap items-center gap-2 border-t bg-white/40 px-3 py-2 text-xs">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Empresa:
+                  </span>
+                  <span className="font-semibold text-navy-deep">
+                    <EditableCompanyName
+                      value={lastRegName}
+                      onSave={(nome) => {
+                        updateHistoricoEmpresa(lastRegId, nome);
+                        renameActivitiesByEmpresa(
+                          { cnpj: lastRegCnpj, empresaAntiga: lastRegName },
+                          nome,
+                        );
+                        setLastRegName(nome);
+                        toast.success("Nome da empresa atualizado.");
+                      }}
+                      emptyLabel="✏️ Digitar nome da empresa"
+                    />
+                  </span>
+                  <span className="flex items-center gap-1 border-l border-border/60 pl-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Contato:
+                    </span>
+                    <span className="text-navy-deep">
+                      <EditableCompanyName
+                        value={lastRegContato}
+                        onSave={(novo) => {
+                          updateHistoricoContatoCargo(lastRegId, { contato: novo });
+                          updateActivityContatoCargo({ contato: novo });
+                          setLastRegContato(novo);
+                          emitHistoricoUpdated();
+                          toast.success("Nome do contato atualizado.");
+                        }}
+                        emptyLabel="✏️ Adicionar nome do contato"
+                        placeholder="Nome do contato"
+                        title="Clique para editar o nome do contato"
+                      />
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1 border-l border-border/60 pl-2">
+                    <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Cargo:
+                    </span>
+                    <span className="text-navy-deep">
+                      <EditableCompanyName
+                        value={lastRegCargo}
+                        onSave={(novo) => {
+                          updateHistoricoContatoCargo(lastRegId, { cargo: novo });
+                          updateActivityContatoCargo({ cargo: novo });
+                          setLastRegCargo(novo);
+                          emitHistoricoUpdated();
+                          toast.success("Cargo atualizado.");
+                        }}
+                        emptyLabel="✏️ Adicionar cargo"
+                        placeholder="Cargo"
+                        title="Clique para editar o cargo"
+                      />
+                    </span>
+                  </span>
+                  <span className="ml-auto flex flex-wrap items-center gap-1">
+                    <Button size="sm" variant="ghost" onClick={copyHistorico} title="Copiar anotação completa para o CRM">
+                      <Copy className="mr-1 h-3 w-3" />
+                      Anotação
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={copyTelefones} title="Copiar apenas telefones e ramais">
+                      Telefones
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={copyEmailsPessoas} title="Copiar apenas e-mails e pessoas para procurar">
+                      E-mails
+                    </Button>
+                  </span>
+                </div>
+              )}
+              <CollapsibleContent className="border-t px-3 pb-3 pt-3">
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                  {historico}
+                </pre>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setHistoricoOpen(false)}
+                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:underline"
+                  >
+                    <span>▲</span>
+                    <span>Recolher histórico</span>
+                  </button>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
-        <DinamicaLigacaoCard analise={analiseAvancada} />
+          <DinamicaLigacaoCard analise={analiseAvancada} />
 
 
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      {/* Confirmação de arquivamento: só sai da esteira do Preparação e vira
+          "perdido" na Central depois que o operador confirma aqui, com um
+          motivo revisável (pré-preenchido pela IA). */}
+      <AlertDialog open={!!arquivarConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Arquivar {arquivarConfirm?.empresaNome ?? "empresa"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              A ligação indicou que a empresa não tem interesse. Confirme para
+              tirar esta empresa da esteira do Preparação Noturna e marcar o
+              lead como perdido na Central de Reuniões. Se cancelar, ela
+              continua no fluxo normal (marcada como "realizada").
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1 px-1">
+            <Label htmlFor="motivo-arquivamento" className="text-xs">
+              Motivo do arquivamento
+            </Label>
+            <Textarea
+              id="motivo-arquivamento"
+              value={motivoEdit}
+              onChange={(e) => setMotivoEdit(e.target.value)}
+              rows={3}
+              className="text-sm"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelarArquivamento}>
+              Não arquivar
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={confirmarArquivamento}>
+              Confirmar arquivamento
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
