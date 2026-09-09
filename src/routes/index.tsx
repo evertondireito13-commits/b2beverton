@@ -389,7 +389,8 @@ export function AppShell({
     | "painel"
     | "agenda"
     | "comissao"
-    | "empresas";
+    | "empresas"
+    | "arquivadas";
 
 
   onSelect?: (v: "pre" | "pos" | "historico") => void;
