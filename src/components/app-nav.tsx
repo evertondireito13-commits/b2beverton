@@ -35,7 +35,8 @@ export type NavKey =
   | "painel"
   | "agenda"
   | "comissao"
-  | "empresas";
+  | "empresas"
+  | "arquivadas";
 
 type HomeTab = "pre" | "pos" | "historico";
 
@@ -395,6 +396,12 @@ export function AppNav({
           defaultOrder={REUNIOES_ORDER}
           renderItem={renderReunioes}
         />
+      </Group>
+
+      <Group titulo="Arquivadas" legenda="Sem interesse — reativação futura" storageKey="arquivadas">
+        <Link to="/arquivadas" className={itemClass(current === "arquivadas")}>
+          <Row icon="🗄️" label="Empresas arquivadas" active={current === "arquivadas"} />
+        </Link>
       </Group>
 
       <Group
