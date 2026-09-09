@@ -447,6 +447,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
     null,
   );
+  const [seletorOpen, setSeletorOpen] = useState(false);
   const [filtroBusca, setFiltroBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
   const [filtroUf, setFiltroUf] = useState("");
@@ -573,6 +574,8 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       return;
     }
     setSaving(true);
+    let nextList: Empresa[] | null = null;
+    let idParaEnriquecer: string | null = null;
     try {
       const dados = parseDadosCnpj(texto);
       const nome = dados.razaoSocial || (await extractNome(texto));
@@ -604,26 +607,28 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         // Mesma unidade já cadastrada: atualiza em vez de duplicar.
         // UF/Setor/Regime nunca são sobrescritos aqui se já tiverem valor —
         // só o "Enriquecer via CNPJ" ou edição manual mudam isso depois.
-        persist(
-          list.map((e) =>
-            e.id === mesmoCnpj.id
-              ? {
-                  ...e,
-                  ...item,
-                  id: e.id,
-                  status: e.status,
-                  uf: e.uf || item.uf,
-                  setor: e.setor || item.setor,
-                  regime: e.regime || item.regime,
-                }
-              : e,
-          ),
+        nextList = list.map((e) =>
+          e.id === mesmoCnpj.id
+            ? {
+                ...e,
+                ...item,
+                id: e.id,
+                status: e.status,
+                uf: e.uf || item.uf,
+                setor: e.setor || item.setor,
+                regime: e.regime || item.regime,
+              }
+            : e,
         );
+        idParaEnriquecer = mesmoCnpj.id;
+        persist(nextList);
         toast.success(`Unidade já cadastrada — dados atualizados: ${nome}`);
       } else {
         const raiz = cnpjRaiz(dados.cnpj);
         const irmas = raiz ? list.filter((e) => cnpjRaiz(e.cnpj) === raiz) : [];
-        persist([...list, item]);
+        nextList = [...list, item];
+        idParaEnriquecer = item.id;
+        persist(nextList);
         if (irmas.length > 0) {
           toast.success(
             `${unidadeLabel(dados.cnpj) ?? "Unidade"} unificada ao grupo ${nome} — ${irmas.length + 1} unidades. Você escolhe qual usar ao enviar ao Pré.`,
@@ -636,6 +641,16 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       setDraftOpen(false);
     } finally {
       setSaving(false);
+    }
+    // Enriquecimento automático via BrasilAPI, restrito só à empresa recém
+    // cadastrada/atualizada — não roda em background sobre o resto da lista
+    // nem trava o fechamento do diálogo. Silencioso: se não tiver CNPJ
+    // válido, simplesmente não faz nada (sem toast de "nada a enriquecer").
+    if (nextList && idParaEnriquecer) {
+      void enriquecerListaCnpjs(nextList, {
+        apenasIds: new Set([idParaEnriquecer]),
+        silencioso: true,
+      });
     }
   }
 
@@ -898,19 +913,36 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   /**
    * Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI,
    * a partir de uma lista específica (usado tanto pelo botão manual quanto
-   * pela importação por CNPJ, que dispara isso sozinha logo após cadastrar).
+   * pela importação por CNPJ e pelo cadastro individual, que disparam isso
+   * sozinhos logo após cadastrar).
    *
    * A BrasilAPI é gratuita mas tem limite de requisições por segundo — por
    * isso aguardamos um pouco entre cada consulta e, se ainda assim vier
    * "HTTP 429" (limite excedido), esperamos mais e tentamos de novo antes de
    * desistir daquela empresa.
+   *
+   * `apenasIds`, quando informado, restringe o enriquecimento só a esses
+   * ids (usado pelo cadastro de empresa única, pra não sair reprocessando
+   * empresas antigas da lista toda). `silencioso` evita o toast de "nada
+   * para enriquecer" quando o enriquecimento é disparado automaticamente
+   * (ex.: empresa cadastrada sem CNPJ válido ainda).
    */
-  async function enriquecerListaCnpjs(baseList: Empresa[]) {
+  async function enriquecerListaCnpjs(
+    baseList: Empresa[],
+    opts?: { apenasIds?: Set<string>; silencioso?: boolean },
+  ) {
+    const apenasIds = opts?.apenasIds;
+    const silencioso = opts?.silencioso ?? false;
     const alvos = baseList.filter(
-      (e) => cnpjDigitos(e.cnpj).length === 14 && (!e.uf || !e.setor || !e.regime),
+      (e) =>
+        cnpjDigitos(e.cnpj).length === 14 &&
+        (!e.uf || !e.setor || !e.regime) &&
+        (!apenasIds || apenasIds.has(e.id)),
     );
     if (alvos.length === 0) {
-      toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
+      if (!silencioso) {
+        toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
+      }
       return baseList;
     }
     setEnriquecendo(true);
@@ -1086,6 +1118,77 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const pendentes = ativas.filter((e) => e.status !== "realizada").length;
   const realizadas = ativas.length - pendentes;
 
+  const seletorDialog = (
+    <Dialog open={seletorOpen} onOpenChange={setSeletorOpen}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-navy-deep">
+            <Plus className="h-4 w-4" />
+            Adicionar Empresas
+          </DialogTitle>
+          <DialogDescription>
+            Escolha como você quer adicionar empresas agora. Você pode usar formas diferentes em momentos diferentes.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              setDraftOpen(true);
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Pencil className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Cadastrar uma empresa</span>
+            <span className="text-xs text-muted-foreground">
+              Cole os dados completos de uma empresa (razão social, CNPJ, contato, observações). UF/setor/regime são preenchidos automaticamente.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              setImportOpen(true);
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Importar várias por CNPJ</span>
+            <span className="text-xs text-muted-foreground">
+              Cole uma lista de empresas — nome e CNPJ, uma por linha. Ideal quando você já tem os CNPJs em mãos.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              navigate({ to: "/descobrir" });
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Search className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Descobrir empresas novas</span>
+            <span className="text-xs text-muted-foreground">
+              Busque empresas novas por cidade e tipo de negócio, sem precisar ter os dados ainda.
+            </span>
+          </button>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setSeletorOpen(false)}>
+            Cancelar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   const importDialog = (
     <Dialog
       open={importOpen}
@@ -1172,7 +1275,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             Cadastrar Empresa — Preparação Noturna
           </DialogTitle>
           <DialogDescription>
-            Cole os dados brutos da empresa (razão social, CNPJ, sócios, contatos, observações). A IA extrai o nome automaticamente.
+            Cole os dados brutos da empresa (razão social, CNPJ, sócios, contatos, observações). A IA extrai o nome automaticamente, e assim que salvar já buscamos UF/setor/regime pelo CNPJ.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -1353,19 +1456,11 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             </div>
             <div className="flex gap-2">
               <Button
-                variant="outline"
-                onClick={() => setImportOpen(true)}
-                className="gap-2 rounded-xl border-hub-line bg-hub-surface px-4 py-2 text-sm font-bold text-hub-text shadow-sm transition hover:border-hub-gold/50 hover:text-hub-gold"
-              >
-                <Sparkles className="h-4 w-4" />
-                Importar por CNPJ
-              </Button>
-              <Button
-                onClick={() => setDraftOpen(true)}
+                onClick={() => setSeletorOpen(true)}
                 className="gap-2 rounded-xl bg-hub-gold px-4 py-2 text-sm font-bold text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
               >
                 <Plus className="h-4 w-4" />
-                Cadastrar Empresa
+                Adicionar Empresas
               </Button>
             </div>
           </div>
@@ -1583,15 +1678,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                     limpar
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void navigate({ to: "/descobrir" })}
-                  title="Buscar empresas novas por cidade e tipo de negócio"
-                  className="ml-auto flex items-center gap-1.5 rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 text-[11px] font-bold text-hub-text transition hover:border-hub-gold/50 hover:text-hub-gold"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  Descobrir empresas novas
-                </button>
               </div>
 
               {/* Linha 2 — busca, filtros e enriquecer */}
@@ -1717,8 +1803,8 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   {aba === "sem_interesse"
                     ? "Nenhuma empresa marcada como sem interesse aqui."
                     : pastaAtual
-                      ? `A pasta "${pastaAtual.nome}" está vazia. Use "Cadastrar Empresa" para adicionar empresas nela.`
-                      : `Sem empresas planejadas para ${date}. Use "Cadastrar Empresa" para começar.`}
+                      ? `A pasta "${pastaAtual.nome}" está vazia. Use "Adicionar Empresas" para adicionar empresas nela.`
+                      : `Sem empresas planejadas para ${date}. Use "Adicionar Empresas" para começar.`}
                 </div>
               ) : empresasFiltradas.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-10 text-center text-sm text-hub-muted">
@@ -1980,6 +2066,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </div>
         )}
 
+        {seletorDialog}
         {importDialog}
         {cadastroDialog}
         {editDialog}
@@ -2045,11 +2132,11 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
 
       <Button
         size="sm"
-        onClick={() => setDraftOpen(true)}
+        onClick={() => setSeletorOpen(true)}
         className="mb-2 h-8 w-full gap-1 bg-navy-deep text-white hover:bg-navy-deep/90"
       >
         <Plus className="h-4 w-4" />
-        <span className="text-[11px] font-semibold">Cadastrar Nova Empresa</span>
+        <span className="text-[11px] font-semibold">Adicionar Empresas</span>
       </Button>
 
       {ativas.length === 0 ? (
@@ -2111,6 +2198,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         </ul>
       )}
 
+      {seletorDialog}
       {importDialog}
       {cadastroDialog}
       {editDialog}
