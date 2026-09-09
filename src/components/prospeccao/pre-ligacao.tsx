@@ -199,6 +199,19 @@ export function PreLigacao({
   useEffect(() => {
     function onLoad(ev: Event) {
       const detail = (ev as CustomEvent<PreHandoffPayload>).detail ?? {};
+
+      // NOVA EMPRESA vinda do Preparação Noturna: limpa TUDO da empresa
+      // anterior (CNPJ, dados colados, script compilado, resultados de
+      // busca, telefones, lead ativo, modo contingência) antes de aplicar os
+      // dados da nova empresa — evita ficar "dado em cima de dado" na tela.
+      // Também zera o "dirty flag": sem isso, se o operador tivesse editado
+      // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
+      // impediria os dados da nova empresa de aparecerem.
+      limparRascunhoPre();
+      setCurrentLeadState(null);
+      setContingenciaAtiva(false);
+      dadosDirtyRef.current = false;
+
       if (detail.preparationId) {
         try { window.sessionStorage.setItem(ACTIVE_PREPARATION_ID_KEY, detail.preparationId); } catch { /* noop */ }
       }
