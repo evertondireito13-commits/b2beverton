@@ -744,8 +744,24 @@ export function PosLigacao({
           reg.resultado = reg.resultado ?? (analiseIa.resumo_executivo || null);
         }
 
+        // CORREÇÃO (Problema 2 — "sem interesse" não arquivava de verdade):
+        // a classificação da IA (interpretacao.status) às vezes não retorna
+        // "arquivado" mesmo quando o texto contém uma negativa comercial
+        // explícita ("sem interesse", "não tem interesse" etc). O detector
+        // textoIndicaNegativaComercial já era usado como rede de segurança
+        // em outros dois pontos (cancelar follow-up e marcar lead como
+        // "perdido" na Central) — mas NÃO entrava na decisão de histStatus,
+        // que é o que efetivamente tira a empresa da fila ativa. Por isso a
+        // empresa continuava "ativa" mesmo depois de registrada como sem
+        // interesse. Agora os dois critérios decidem juntos, uma única vez.
+        const negativaDetectada = textoIndicaNegativaComercial(`${descricao}\n${text}`);
         const s = interpretacao.status;
-        const histStatus = s === "arquivado" ? "arquivado" : s === "reuniao" ? "concluido" : "pendente";
+        const histStatus =
+          s === "arquivado" || negativaDetectada
+            ? "arquivado"
+            : s === "reuniao"
+            ? "concluido"
+            : "pendente";
 
         saveHistorico(reg);
         // Persistência opcional da análise de dinâmica (tabela separada).
@@ -769,8 +785,7 @@ export function PosLigacao({
           const prepId = window.sessionStorage.getItem(ACTIVE_PREPARATION_ID_KEY);
           if (prepId) window.sessionStorage.removeItem(ACTIVE_PREPARATION_ID_KEY);
           // Classifica o desfecho: sem interesse (vermelho) x em andamento (verde)
-          const semInteresse =
-            s === "arquivado" || textoIndicaNegativaComercial(`${descricao}\n${text}`);
+          const semInteresse = s === "arquivado" || negativaDetectada;
           if (prepId) {
             window.dispatchEvent(
               new CustomEvent(PREPARACAO_REALIZADA_EVENT, {
@@ -880,7 +895,7 @@ export function PosLigacao({
             );
           }
 
-        } else if (s === "arquivado" || textoIndicaNegativaComercial(`${descricao}\n${text}`)) {
+        } else if (s === "arquivado" || negativaDetectada) {
           // Regra de transição inversa: recusa explícita => lead ativo na Central vira "perdido".
           try {
             const leadAtivo = findLead(reg.empresaNome, reg.cnpj ?? null);
@@ -1276,4 +1291,3 @@ function extractCnpjFromHistorico(text: string): string | null {
   const m = text.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/);
   return m ? m[0] : null;
 }
-
