@@ -2,13 +2,21 @@
 // (Casa dos Dados / CNPJ.biz / Receita). Extrai o máximo de campos possível
 // sem depender de IA — usado na Preparação Noturna.
 
+export type ContatoRaw = { nome: string; cargo?: string };
+
 export type DadosCnpj = {
   razaoSocial?: string;
   cnpj?: string;
   telefone?: string;
+  telefoneSecundario?: string;
   email?: string;
+  emailSecundario?: string;
   contato?: string;
   cargo?: string;
+  // Sócios/administradores adicionais além do primeiro (que vira contato/cargo).
+  // Vêm sem telefone/e-mail próprios — o texto bruto normalmente não separa
+  // isso por pessoa — o usuário completa manualmente na tela de edição.
+  contatosExtras?: ContatoRaw[];
   observacoes?: string;
   uf?: string;
   setor?: string;
@@ -48,13 +56,27 @@ export function parseDadosCnpj(texto: string): DadosCnpj {
     texto.match(/\b\d{14}\b/);
   if (mCnpj) out.cnpj = mCnpj[0];
 
-  // E-mail
-  const mail = texto.match(/[\w.+-]+@[\w-]+\.[\w.-]{2,}/);
-  if (mail) out.email = mail[0].toLowerCase();
+  // E-mail(s) — pega todos os que aparecem e usa os 2 primeiros distintos.
+  // O primeiro vira o e-mail principal, o segundo (se existir) fica como
+  // "E-mail secundário" — comum quando a consulta lista e-mail de contato
+  // além do e-mail cadastral da empresa.
+  const emailsEncontrados = [
+    ...new Set(
+      [...texto.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]{2,}/g)].map((m) => m[0].toLowerCase()),
+    ),
+  ];
+  if (emailsEncontrados[0]) out.email = emailsEncontrados[0];
+  if (emailsEncontrados[1]) out.emailSecundario = emailsEncontrados[1];
 
-  // Telefone brasileiro
-  const tel = texto.match(/\(?\b\d{2}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b/);
-  if (tel) out.telefone = limpar(tel[0]);
+  // Telefone(s) brasileiro(s) — mesma lógica: o primeiro é o principal, o
+  // segundo (se existir) vira "Telefone secundário".
+  const telefonesEncontrados = [
+    ...new Set(
+      [...texto.matchAll(/\(?\b\d{2}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}\b/g)].map((m) => limpar(m[0])),
+    ),
+  ];
+  if (telefonesEncontrados[0]) out.telefone = telefonesEncontrados[0];
+  if (telefonesEncontrados[1]) out.telefoneSecundario = telefonesEncontrados[1];
 
   // Razão social: linha logo após o CNPJ, ou primeira linha "de empresa"
   const idxCnpj = out.cnpj ? linhas.findIndex((l) => l.includes(out.cnpj!)) : -1;
@@ -68,17 +90,28 @@ export function parseDadosCnpj(texto: string): DadosCnpj {
   });
   if (razao) out.razaoSocial = razao.replace(/\s+$/, "");
 
-  // Contato: primeiro Administrador / Sócio pessoa física listado
+  // Contato(s): TODOS os Administrador(es)/Sócio(s) pessoa física listados —
+  // o primeiro vira "Contato/Cargo" (campos principais, como antes), os
+  // demais entram em contatosExtras para não se perder mais ninguém.
+  const contatosEncontrados: ContatoRaw[] = [];
   for (let i = 0; i < linhas.length; i++) {
-    const papel = linhas[i].match(/^(Administrador|Sócio-?Administrador|Sócio|Diretor|Presidente)\b/i);
+    const papel = linhas[i].match(/^(Administrador[a]?|Sócio-?Administrador[a]?|Sóci[oa]|Diretor[a]?|Presidente)\b/i);
     if (papel && i > 0) {
       const nome = linhas[i - 1];
       if (nome && !LIXO.test(nome) && /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' .]{4,60}$/.test(nome) && nome.includes(" ")) {
-        out.contato = nome;
-        out.cargo = papel[1].replace(/^s/i, "S");
-        break;
+        const cargoLabel = papel[1].charAt(0).toUpperCase() + papel[1].slice(1);
+        if (!contatosEncontrados.some((c) => c.nome.toLowerCase() === nome.toLowerCase())) {
+          contatosEncontrados.push({ nome, cargo: cargoLabel });
+        }
       }
     }
+  }
+  if (contatosEncontrados[0]) {
+    out.contato = contatosEncontrados[0].nome;
+    out.cargo = contatosEncontrados[0].cargo;
+  }
+  if (contatosEncontrados.length > 1) {
+    out.contatosExtras = contatosEncontrados.slice(1);
   }
 
   // Observações: CNAE principal + endereço (linha com UF + CEP)
