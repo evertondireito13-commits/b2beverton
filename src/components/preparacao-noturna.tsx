@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -551,6 +551,18 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     savePastas(next);
     if (date === `pasta:${id}`) setDate(todayISO());
     toast.success("Pasta excluída");
+  }
+
+  /** Move uma pasta uma posição para cima ou para baixo na lista da barra lateral. */
+  function moverPasta(id: string, direcao: "cima" | "baixo") {
+    const index = pastas.findIndex((p) => p.id === id);
+    if (index < 0) return;
+    const alvo = direcao === "cima" ? index - 1 : index + 1;
+    if (alvo < 0 || alvo >= pastas.length) return;
+    const next = [...pastas];
+    [next[index], next[alvo]] = [next[alvo], next[index]];
+    setPastas(next);
+    savePastas(next);
   }
 
 
@@ -1572,7 +1584,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 </span>
               </button>
 
-              {pastas.map((p) => {
+              {pastas.map((p, index) => {
                 const bucket = `pasta:${p.id}`;
                 const ativa = date === bucket;
                 const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
@@ -1588,7 +1600,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                       type="button"
                       onClick={() => setDate(bucket)}
                       title="Trabalhar esta pasta"
-                      className="flex w-full items-center gap-2.5 px-3 py-2.5 pr-12 text-left"
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 pr-16 text-left"
                     >
                       <span
                         className={
@@ -1609,23 +1621,45 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                         <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
                       </span>
                     </button>
-                    <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
-                        className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                        title="Renomear pasta"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => excluirPasta(p.id)}
-                        className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
-                        title="Excluir pasta"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                    <div className="absolute right-1.5 top-1.5 flex flex-col gap-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100">
+                      <div className="flex gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => moverPasta(p.id, "cima")}
+                          disabled={index === 0}
+                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text disabled:pointer-events-none disabled:opacity-30"
+                          title="Mover para cima"
+                        >
+                          <ChevronUp className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moverPasta(p.id, "baixo")}
+                          disabled={index === pastas.length - 1}
+                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text disabled:pointer-events-none disabled:opacity-30"
+                          title="Mover para baixo"
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                      </div>
+                      <div className="flex gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
+                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                          title="Renomear pasta"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => excluirPasta(p.id)}
+                          className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                          title="Excluir pasta"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
