@@ -4,6 +4,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireBhmGate } from "@/lib/bhm-gate";
 
+export type SocioEnriquecido = { nome: string; qualificacao: string | null };
+
 export type CnpjEnriquecimento =
   | {
       ok: true;
@@ -12,6 +14,7 @@ export type CnpjEnriquecimento =
       setor: string | null;
       regime: string | null;
       telefone: string | null;
+      telefoneSecundario: string | null;
       email: string | null;
       razaoSocial: string | null;
       situacaoCadastral: string | null;
@@ -20,7 +23,10 @@ export type CnpjEnriquecimento =
       dataAbertura: string | null;
       capitalSocial: string | null;
       endereco: string | null;
-      socios: string | null;
+      // Lista completa de sócios/administradores (nome + qualificação), em
+      // vez de um texto único — permite popular "Contatos adicionais" na
+      // tela de edição sem perder ninguém.
+      socios: SocioEnriquecido[] | null;
     }
   | { ok: false; erro: string };
 
@@ -88,7 +94,7 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         numero?: string | null;
         bairro?: string | null;
         cep?: string | null;
-        qsa?: { nome_socio?: string }[] | null;
+        qsa?: { nome_socio?: string; qualificacao_socio?: string | null }[] | null;
       };
 
       // A base pública só informa Simples/MEI com certeza; Presumido x Real
@@ -104,11 +110,16 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         j.cep ? `CEP ${j.cep}` : null,
       ].filter(Boolean);
 
-      const socios = (j.qsa ?? [])
-        .map((s) => s.nome_socio)
-        .filter((n): n is string => !!n)
-        .slice(0, 6)
-        .join(", ");
+      const telefonePrincipal = formatarTelefone(j.ddd_telefone_1) ?? formatarTelefone(j.ddd_telefone_2);
+      const telefoneSecundario =
+        formatarTelefone(j.ddd_telefone_1) && formatarTelefone(j.ddd_telefone_2)
+          ? formatarTelefone(j.ddd_telefone_2)
+          : null;
+
+      const socios: SocioEnriquecido[] = (j.qsa ?? [])
+        .map((s) => ({ nome: (s.nome_socio ?? "").trim(), qualificacao: s.qualificacao_socio ?? null }))
+        .filter((s): s is SocioEnriquecido => !!s.nome)
+        .slice(0, 8);
 
       return {
         ok: true,
@@ -116,7 +127,8 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         municipio: j.municipio ?? null,
         setor: j.cnae_fiscal_descricao ?? null,
         regime,
-        telefone: formatarTelefone(j.ddd_telefone_1) ?? formatarTelefone(j.ddd_telefone_2),
+        telefone: telefonePrincipal,
+        telefoneSecundario,
         email: j.email?.trim() || null,
         razaoSocial: j.razao_social ?? null,
         situacaoCadastral: j.descricao_situacao_cadastral ?? null,
@@ -125,7 +137,7 @@ export const consultarCnpj = createServerFn({ method: "GET" })
         dataAbertura: formatarData(j.data_inicio_atividade),
         capitalSocial: formatarCapitalSocial(j.capital_social),
         endereco: enderecoPartes.length ? enderecoPartes.join(" - ") : null,
-        socios: socios || null,
+        socios: socios.length ? socios : null,
       };
     } catch (err) {
       clearTimeout(timeoutId);
