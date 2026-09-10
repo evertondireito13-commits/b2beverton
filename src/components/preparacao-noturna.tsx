@@ -456,6 +456,11 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [bulkPasta, setBulkPasta] = useState<string>("");
   const [bulkMode, setBulkMode] = useState<"copiar" | "mover">("copiar");
   const [pastas, setPastas] = useState<PastaPreparacao[]>([]);
+  // Incrementado sempre que uma ação pode ter mudado a quantidade de empresas
+  // dentro de alguma pasta SEM mexer na lista da data/pasta ativa agora (ex.:
+  // copiar empresas selecionadas para outra pasta). Serve só para invalidar
+  // o cache de contagem por pasta (contagemPorPasta) de forma controlada.
+  const [pastaCountsVersion, setPastaCountsVersion] = useState(0);
   const [pastaDialog, setPastaDialog] = useState<{ id?: string; nome: string } | null>(null);
   const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
     null,
@@ -689,8 +694,13 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   }
 
 
+  /** Exclui uma empresa da lista — pede confirmação, pois a ação não pode ser desfeita. */
   function removeEmpresa(id: string) {
+    const alvo = list.find((e) => e.id === id);
+    const nome = alvo?.nome || "esta empresa";
+    if (!window.confirm(`Excluir "${nome}"? Essa ação não pode ser desfeita.`)) return;
     persist(list.filter((e) => e.id !== id));
+    toast.success(`Excluída: ${nome}`);
   }
 
   function moveToDate(id: string, targetDate: string) {
@@ -742,6 +752,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     if (bulkMode === "mover") {
       persist(list.filter((e) => !selecionados.includes(e.id)));
     }
+    // O destino pode ser uma pasta que não é a data/pasta ativa agora — o
+    // `list` do estado não reflete isso sozinho, então avisamos a contagem
+    // por pasta pra recalcular.
+    setPastaCountsVersion((v) => v + 1);
     setSelecionados([]);
     const dup = itens.length - clones.length;
     const destinoLabel = isPastaBucket(target)
@@ -754,14 +768,30 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   }
 
 
+  // Agrupa as empresas por raiz de CNPJ uma única vez por lista. Antes, cada
+  // linha renderizada rodava um filter() na lista inteira só pra descobrir se
+  // fazia parte de um grupo matriz/filiais — com listas grandes isso deixava
+  // a tela mais lenta. Agora é um Map calculado uma vez por mudança de lista.
+  const gruposPorRaizCnpj = useMemo(() => {
+    const map = new Map<string, Empresa[]>();
+    for (const e of list) {
+      const raiz = cnpjRaiz(e.cnpj);
+      if (!raiz) continue;
+      const arr = map.get(raiz);
+      if (arr) arr.push(e);
+      else map.set(raiz, [e]);
+    }
+    for (const arr of map.values()) {
+      if (arr.length > 1) arr.sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""));
+    }
+    return map;
+  }, [list]);
 
   function unidadesDoGrupo(item: Empresa): Empresa[] {
     const raiz = cnpjRaiz(item.cnpj);
     if (!raiz) return [item];
-    const irmas = list.filter((e) => cnpjRaiz(e.cnpj) === raiz);
-    return irmas.length > 1
-      ? [...irmas].sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""))
-      : [item];
+    const grupo = gruposPorRaizCnpj.get(raiz);
+    return grupo && grupo.length > 1 ? grupo : [item];
   }
 
   /** Antes de injetar no Pré, se a empresa tiver matriz + filiais, pergunta qual unidade usar. */
@@ -870,6 +900,24 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const filtrosAtivos = !!(
     filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime || filtroEtapa
   );
+
+  /**
+   * Contagem de empresas ativas por pasta, usada na barra lateral.
+   * Antes, cada RENDER (inclusive digitar na busca) relia e reprocessava o
+   * localStorage de TODAS as pastas. Agora só recalcula quando algo que pode
+   * ter mudado essas contagens realmente muda: a lista de pastas, a lista da
+   * data/pasta ativa, ou uma ação em lote que mexeu em outra pasta
+   * (pastaCountsVersion).
+   */
+  const contagemPorPasta = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!hydrated) return map;
+    for (const p of pastas) {
+      map.set(p.id, load(`pasta:${p.id}`).filter((e) => e.status !== "sem_interesse").length);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, pastas, list, pastaCountsVersion]);
 
   /** Pontuação do ranking (mesma lógica do Painel Executivo) por empresa. */
   const scorePorChave = useMemo(() => {
@@ -1591,7 +1639,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   {pastas.map((p) => {
                     const bucket = `pasta:${p.id}`;
                     const ativa = date === bucket;
-                    const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
+                    const qtd = contagemPorPasta.get(p.id) ?? 0;
                     return (
                       <SortablePastaRow
                         key={p.id}
@@ -1892,7 +1940,12 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                             key={e.id}
                             id={e.id}
                             className={
-                              "group flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3.5 transition " +
+                              "group flex flex-wrap items-center gap-3 rounded-2xl border border-l-4 px-4 py-3.5 transition " +
+                              (recusado
+                                ? "border-l-rose-400 "
+                                : done
+                                  ? "border-l-emerald-400 "
+                                  : "border-l-amber-400 ") +
                               (recusado
                                 ? "border-rose-400/20 bg-rose-400/5"
                                 : done
@@ -2211,10 +2264,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               <li
                 key={e.id}
                 className={
-                  "group flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition " +
+                  "group flex items-center gap-1.5 rounded-md border border-l-4 px-2 py-1.5 transition " +
                   (done
-                    ? "border-emerald-500/40 bg-emerald-500/10"
-                    : "border-border/60 bg-white hover:border-navy-deep/40 hover:bg-primary/5")
+                    ? "border-l-emerald-500 border-emerald-500/40 bg-emerald-500/10"
+                    : "border-l-amber-400 border-border/60 bg-white hover:border-navy-deep/40 hover:bg-primary/5")
                 }
                 title={e.nome}
               >
