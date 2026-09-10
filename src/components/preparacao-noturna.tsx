@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, ChevronUp, ChevronDown } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -553,14 +553,16 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     toast.success("Pasta excluída");
   }
 
-  /** Move uma pasta uma posição para cima ou para baixo na lista da barra lateral. */
-  function moverPasta(id: string, direcao: "cima" | "baixo") {
-    const index = pastas.findIndex((p) => p.id === id);
-    if (index < 0) return;
-    const alvo = direcao === "cima" ? index - 1 : index + 1;
-    if (alvo < 0 || alvo >= pastas.length) return;
-    const next = [...pastas];
-    [next[index], next[alvo]] = [next[alvo], next[index]];
+  /** Reordena as pastas por arrastar-e-soltar (drag handle ⠿ em cada item). */
+  function onReorderPastas(ev: DragEndEvent) {
+    const activeId = String(ev.active.id);
+    const overId = ev.over ? String(ev.over.id) : null;
+    if (!overId || activeId === overId) return;
+    const ids = pastas.map((p) => p.id);
+    const from = ids.indexOf(activeId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(pastas, from, to);
     setPastas(next);
     savePastas(next);
   }
@@ -1584,86 +1586,69 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 </span>
               </button>
 
-              {pastas.map((p, index) => {
-                const bucket = `pasta:${p.id}`;
-                const ativa = date === bucket;
-                const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
-                return (
-                  <div
-                    key={p.id}
-                    className={
-                      "group relative rounded-xl border-2 transition " +
-                      (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
-                    }
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setDate(bucket)}
-                      title="Trabalhar esta pasta"
-                      className="flex w-full items-center gap-2.5 px-3 py-2.5 pr-16 text-left"
-                    >
-                      <span
+              <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorderPastas}>
+                <SortableContext items={pastas.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                  {pastas.map((p) => {
+                    const bucket = `pasta:${p.id}`;
+                    const ativa = date === bucket;
+                    const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
+                    return (
+                      <SortablePastaRow
+                        key={p.id}
+                        id={p.id}
                         className={
-                          "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
-                          (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                          "group relative flex items-center rounded-xl border-2 transition " +
+                          (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
                         }
                       >
-                        {qtd}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={
-                            "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
-                          }
-                        >
-                          {p.nome}
-                        </span>
-                        <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
-                      </span>
-                    </button>
-                    <div className="absolute right-1.5 top-1.5 flex flex-col gap-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100">
-                      <div className="flex gap-0.5">
                         <button
                           type="button"
-                          onClick={() => moverPasta(p.id, "cima")}
-                          disabled={index === 0}
-                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text disabled:pointer-events-none disabled:opacity-30"
-                          title="Mover para cima"
+                          onClick={() => setDate(bucket)}
+                          title="Trabalhar esta pasta"
+                          className="flex min-w-0 flex-1 items-center gap-2.5 py-2.5 pl-1 pr-12 text-left"
                         >
-                          <ChevronUp className="h-3 w-3" />
+                          <span
+                            className={
+                              "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
+                              (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                            }
+                          >
+                            {qtd}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={
+                                "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
+                              }
+                            >
+                              {p.nome}
+                            </span>
+                            <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
+                          </span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => moverPasta(p.id, "baixo")}
-                          disabled={index === pastas.length - 1}
-                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text disabled:pointer-events-none disabled:opacity-30"
-                          title="Mover para baixo"
-                        >
-                          <ChevronDown className="h-3 w-3" />
-                        </button>
-                      </div>
-                      <div className="flex gap-0.5">
-                        <button
-                          type="button"
-                          onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
-                          className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                          title="Renomear pasta"
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => excluirPasta(p.id)}
-                          className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
-                          title="Excluir pasta"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
+                            className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                            title="Renomear pasta"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => excluirPasta(p.id)}
+                            className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                            title="Excluir pasta"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </SortablePastaRow>
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
 
               <button
                 type="button"
@@ -2779,5 +2764,39 @@ function SortableEmpresaRow({
       </button>
       {children}
     </li>
+  );
+}
+
+/** Linha arrastável da lista de Pastas na barra lateral — mesmo padrão do menu "PROSPECTAR". */
+function SortablePastaRow({
+  id,
+  className,
+  children,
+}: {
+  id: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={className + (isDragging ? " opacity-60" : "")}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab touch-none rounded p-1 pl-2 text-hub-muted hover:text-hub-text active:cursor-grabbing"
+        title="Arraste para reordenar"
+        aria-label="Reordenar pasta"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      {children}
+    </div>
   );
 }
