@@ -75,6 +75,17 @@ function saveHashes(scope: string, map: HashMap) {
   }
 }
 
+/** Faz JSON.parse com segurança, sempre devolvendo um array (nunca lança). */
+function safeParseArray<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function iso(v: unknown): string | null {
   if (!v || typeof v !== "string") return null;
   const d = new Date(v);
@@ -278,8 +289,16 @@ function localKey(kind: Kind, consultor: string) {
 }
 
 /**
- * Baixa os dados da nuvem para o cache local. Se falhar, mantém o cache atual
- * e marca o estado como "possivelmente desatualizado".
+ * Baixa os dados da nuvem para o cache local.
+ *
+ * IMPORTANTE (correção de segurança): esta função NUNCA sobrescreve o
+ * localStorage direto com o que veio da nuvem. Em vez disso, ela MESCLA por
+ * id: o que veio da nuvem é a base, e qualquer item que só existe localmente
+ * (ainda não sincronizado, ou que por algum motivo não veio na resposta da
+ * nuvem) é preservado e reenviado ao Supabase. Isso evita que uma resposta
+ * vazia ou incompleta da nuvem apague dados locais válidos.
+ *
+ * Se a chamada à nuvem falhar (exceção), o cache local não é tocado.
  */
 export async function hydrateFromCloud(consultor: string): Promise<void> {
   if (!isBrowser()) return;
@@ -290,19 +309,62 @@ export async function hydrateFromCloud(consultor: string): Promise<void> {
       listarLeads({ data: { consultor } }),
     ]);
 
-    const historicos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
-    const leadList = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
+    const cloudHistoricos = (hist ?? []).map((r) => rowToHistorico(r as unknown as HistoricoRow, consultor));
+    const cloudLeads = (leads ?? []).map((r) => rowToLead(r as unknown as LeadRow));
 
-    window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
-    window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
+    // --- Histórico: mescla com o que já existe localmente, nunca some com nada ---
+    const localHistoricos = safeParseArray<HistoricoEmpresa>(
+      window.localStorage.getItem(localKey("historico", consultor)),
+    );
+    const cloudHistIds = new Set(cloudHistoricos.map((r) => r.id));
+    const historicoSoLocal = localHistoricos
+      .map((r) => ({ ...r, id: stableUuid(r.id) }))
+      .filter((r) => !cloudHistIds.has(r.id));
+    const mergedHistoricos = [...cloudHistoricos, ...historicoSoLocal];
+
+    // --- Leads: mesma lógica de mesclagem ---
+    const localLeads = safeParseArray<Lead>(window.localStorage.getItem(localKey("leads", consultor)));
+    const cloudLeadIds = new Set(cloudLeads.map((l) => l.id));
+    const leadsSoLocal = localLeads
+      .map((l) => ({ ...l, id: stableUuid(l.id) }))
+      .filter((l) => !cloudLeadIds.has(l.id));
+    const mergedLeads = [...cloudLeads, ...leadsSoLocal];
+
+    window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(mergedHistoricos));
+    window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(mergedLeads));
     saveHashes(
       `historico::${consultor}`,
-      Object.fromEntries(historicos.map((r) => [r.id, hashOf(historicoToRow(r, consultor))])),
+      Object.fromEntries(mergedHistoricos.map((r) => [r.id, hashOf(historicoToRow(r, consultor))])),
     );
     saveHashes(
       `leads::${consultor}`,
-      Object.fromEntries(leadList.map((l) => [l.id, hashOf(leadToRow(l, consultor))])),
+      Object.fromEntries(mergedLeads.map((l) => [l.id, hashOf(leadToRow(l, consultor))])),
     );
+
+    // Reenvia pra nuvem os itens que só existiam localmente, pra reconciliar
+    if (historicoSoLocal.length) {
+      const rows = historicoSoLocal.map((r) => historicoToRow(r, consultor)) as unknown as Array<
+        Record<string, unknown>
+      >;
+      for (let i = 0; i < rows.length; i += 200) {
+        try {
+          await upsertHistoricos({ data: { consultor, rows: rows.slice(i, i + 200) } });
+        } catch (e) {
+          console.warn("[cloud-store] falha ao reenviar histórico só-local:", e);
+        }
+      }
+    }
+    if (leadsSoLocal.length) {
+      const rows = leadsSoLocal.map((l) => leadToRow(l, consultor)) as unknown as Array<Record<string, unknown>>;
+      for (let i = 0; i < rows.length; i += 200) {
+        try {
+          await upsertLeads({ data: { consultor, rows: rows.slice(i, i + 200) } });
+        } catch (e) {
+          console.warn("[cloud-store] falha ao reenviar leads só-local:", e);
+        }
+      }
+    }
+
     setCloudStale(false);
     window.dispatchEvent(new Event("bhm:historico-updated"));
     window.dispatchEvent(new CustomEvent("bhm:leads-updated"));
