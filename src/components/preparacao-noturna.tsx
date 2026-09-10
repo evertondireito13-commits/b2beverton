@@ -60,6 +60,16 @@ export const PENDING_PRE_LIGACAO_KEY = "bhm.pending-pre-ligacao";
 
 type EmpresaStatus = "pending" | "realizada" | "sem_interesse";
 
+// Contato adicional (sócio/pessoa extra) além do "Contato principal" —
+// suporta as empresas que têm mais de um sócio/administrador relevante.
+export type ContatoExtra = {
+  id: string;
+  nome?: string;
+  cargo?: string;
+  telefone?: string;
+  email?: string;
+};
+
 type Empresa = {
   id: string;
   nome: string;
@@ -72,7 +82,10 @@ type Empresa = {
   contato?: string;
   cargo?: string;
   telefone?: string;
+  telefoneSecundario?: string;
   email?: string;
+  emailSecundario?: string;
+  contatosExtras?: ContatoExtra[];
   observacoes?: string;
   uf?: string;
   setor?: string;
@@ -588,9 +601,16 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         razaoSocial: dados.razaoSocial,
         cnpj: dados.cnpj,
         telefone: dados.telefone,
+        telefoneSecundario: dados.telefoneSecundario,
         email: dados.email,
+        emailSecundario: dados.emailSecundario,
         contato: dados.contato,
         cargo: dados.cargo,
+        contatosExtras: (dados.contatosExtras ?? []).map((c) => ({
+          id: newId(),
+          nome: c.nome,
+          cargo: c.cargo,
+        })),
         observacoes: dados.observacoes,
         uf: dados.uf,
         setor: dados.setor,
@@ -979,17 +999,36 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
                 r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
                 r.endereco ? `Endereço: ${r.endereco}` : null,
-                r.socios ? `Sócios: ${r.socios}` : null,
+                r.socios && r.socios.length
+                  ? `Sócios: ${r.socios.map((s) => s.nome).join(", ")}`
+                  : null,
               ].filter((linha): linha is string => !!linha);
+              // Só preenche "Contatos adicionais" automaticamente se a
+              // empresa ainda não tiver nenhum — nunca sobrepõe edição manual.
+              // O sócio já usado em "Contato" (campo principal) não é
+              // repetido aqui.
+              const contatosDoQsa: ContatoExtra[] = (r.socios ?? [])
+                .filter(
+                  (s) =>
+                    s.nome.trim().toLowerCase() !== (e.contato ?? "").trim().toLowerCase(),
+                )
+                .map((s) => ({ id: newId(), nome: s.nome, cargo: s.qualificacao ?? undefined }));
               return {
                 ...e,
                 uf: e.uf || r.uf || undefined,
                 setor: e.setor || r.setor || undefined,
                 regime: e.regime || r.regime || undefined,
                 telefone: e.telefone || r.telefone || undefined,
+                telefoneSecundario: e.telefoneSecundario || r.telefoneSecundario || undefined,
                 email: e.email || r.email || undefined,
                 razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
                 observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
+                contatosExtras:
+                  e.contatosExtras && e.contatosExtras.length > 0
+                    ? e.contatosExtras
+                    : contatosDoQsa.length
+                      ? contatosDoQsa
+                      : e.contatosExtras,
               };
             });
           } else if (r.erro?.includes("429") && tentativas < 3) {
@@ -1323,10 +1362,12 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const editDialog = (
     <EditEmpresaDialog
       empresa={editingEmpresa}
+      todasEmpresas={list}
       onClose={() => setEditingEmpresa(null)}
       onSave={saveEmpresaEdits}
       onRemove={(id) => { removeEmpresa(id); setEditingEmpresa(null); }}
       onSend={(item) => { setEditingEmpresa(null); enviarParaPre(item); }}
+      onSwitchEmpresa={(item) => setEditingEmpresa(item)}
     />
   );
 
@@ -2211,16 +2252,20 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
 
 function EditEmpresaDialog({
   empresa,
+  todasEmpresas,
   onClose,
   onSave,
   onRemove,
   onSend,
+  onSwitchEmpresa,
 }: {
   empresa: Empresa | null;
+  todasEmpresas: Empresa[];
   onClose: () => void;
   onSave: (patch: Empresa) => void;
   onRemove: (id: string) => void;
   onSend?: (item: Empresa) => void;
+  onSwitchEmpresa?: (item: Empresa) => void;
 }) {
   const [nome, setNome] = useState("");
   const [razaoSocial, setRazaoSocial] = useState("");
@@ -2228,9 +2273,12 @@ function EditEmpresaDialog({
   const [contato, setContato] = useState("");
   const [cargo, setCargo] = useState("");
   const [telefone, setTelefone] = useState("");
+  const [telefoneSecundario, setTelefoneSecundario] = useState("");
   const [email, setEmail] = useState("");
+  const [emailSecundario, setEmailSecundario] = useState("");
   const [emailCheck, setEmailCheck] = useState<ResultadoVerificacaoEmail | null>(null);
   const [emailChecking, setEmailChecking] = useState(false);
+  const [contatosExtras, setContatosExtras] = useState<ContatoExtra[]>([]);
   const [observacoes, setObservacoes] = useState("");
   const [textoBruto, setTextoBruto] = useState("");
   const [uf, setUf] = useState("");
@@ -2247,9 +2295,16 @@ function EditEmpresaDialog({
     setContato(empresa.contato || auto.contato || "");
     setCargo(empresa.cargo || auto.cargo || "");
     setTelefone(empresa.telefone || auto.telefone || "");
+    setTelefoneSecundario(empresa.telefoneSecundario || auto.telefoneSecundario || "");
     setEmail(empresa.email || auto.email || "");
+    setEmailSecundario(empresa.emailSecundario || auto.emailSecundario || "");
     setEmailCheck(null);
     setEmailChecking(false);
+    setContatosExtras(
+      empresa.contatosExtras && empresa.contatosExtras.length > 0
+        ? empresa.contatosExtras
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
     setObservacoes(empresa.observacoes || auto.observacoes || "");
     setTextoBruto(empresa.textoBruto ?? "");
     setUf(empresa.uf || auto.uf || "");
@@ -2268,18 +2323,61 @@ function EditEmpresaDialog({
     setContato((atual) => atual || auto.contato || atual);
     setCargo((atual) => atual || auto.cargo || atual);
     setTelefone((atual) => atual || auto.telefone || atual);
+    setTelefoneSecundario((atual) => atual || auto.telefoneSecundario || atual);
     setEmail((atual) => atual || auto.email || atual);
+    setEmailSecundario((atual) => atual || auto.emailSecundario || atual);
     setObservacoes((atual) => atual || auto.observacoes || atual);
     setUf((atual) => atual || auto.uf || atual);
     setSetor((atual) => atual || auto.setor || atual);
     setRegime((atual) => atual || auto.regime || atual);
+    setContatosExtras((atual) =>
+      atual.length > 0
+        ? atual
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
+  }
+
+  function addContatoExtra() {
+    setContatosExtras((prev) => [...prev, { id: newId(), nome: "", cargo: "", telefone: "", email: "" }]);
+  }
+
+  function updateContatoExtra(id: string, patch: Partial<ContatoExtra>) {
+    setContatosExtras((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }
+
+  function removeContatoExtra(id: string) {
+    setContatosExtras((prev) => prev.filter((c) => c.id !== id));
   }
 
   const open = empresa !== null;
 
+  // Unidades do mesmo grupo econômico (mesma raiz de CNPJ) — matriz e
+  // filiais. Só aparece o bloco quando há mais de uma unidade cadastrada.
+  const unidadesGrupo = useMemo(() => {
+    const raiz = cnpjRaiz(cnpj);
+    if (!raiz) return [];
+    const irmas = todasEmpresas.filter((e) => cnpjRaiz(e.cnpj) === raiz);
+    return irmas.length > 1
+      ? [...irmas].sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""))
+      : [];
+  }, [cnpj, todasEmpresas]);
+
+  const labelUnidadeAtual = unidadeLabel(cnpj);
+
   function buildPatch(): Empresa | null {
     if (!empresa) return null;
     const nomeFinal = nome.trim() || empresa.nome;
+    const contatosLimpos: ContatoExtra[] = contatosExtras
+      .filter(
+        (c) => (c.nome ?? "").trim() || (c.telefone ?? "").trim() || (c.email ?? "").trim() || (c.cargo ?? "").trim(),
+      )
+      .map((c) => ({
+        id: c.id,
+        nome: c.nome?.trim() || undefined,
+        cargo: c.cargo?.trim() || undefined,
+        telefone: c.telefone?.trim() || undefined,
+        email: c.email?.trim() || undefined,
+      }));
     return {
       ...empresa,
       nome: nomeFinal,
@@ -2288,7 +2386,10 @@ function EditEmpresaDialog({
       contato: contato.trim() || undefined,
       cargo: cargo.trim() || undefined,
       telefone: telefone.trim() || undefined,
+      telefoneSecundario: telefoneSecundario.trim() || undefined,
       email: email.trim() || undefined,
+      emailSecundario: emailSecundario.trim() || undefined,
+      contatosExtras: contatosLimpos.length ? contatosLimpos : undefined,
       observacoes: observacoes.trim() || undefined,
       textoBruto,
       uf: uf.trim() || undefined,
@@ -2309,11 +2410,25 @@ function EditEmpresaDialog({
     onSend?.(patch);
   }
 
+  /** Salva as edições atuais antes de trocar a tela para outra unidade do grupo. */
+  function trocarParaUnidade(unidade: Empresa) {
+    const patch = buildPatch();
+    if (patch) onSave(patch);
+    onSwitchEmpresa?.(unidade);
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Editar empresa</DialogTitle>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            Editar empresa
+            {labelUnidadeAtual && (
+              <span className="rounded-full bg-navy-deep/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-navy-deep">
+                {labelUnidadeAtual}
+              </span>
+            )}
+          </DialogTitle>
           <DialogDescription>
             Ajuste os dados e envie direto ao Pré-ligação quando estiver pronto.
           </DialogDescription>
@@ -2326,7 +2441,11 @@ function EditEmpresaDialog({
             <Field label="Telefone" value={telefone} onChange={setTelefone} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Contato" value={contato} onChange={setContato} />
+            <Field label="Telefone secundário" value={telefoneSecundario} onChange={setTelefoneSecundario} />
+            <Field label="E-mail secundário" value={emailSecundario} onChange={setEmailSecundario} type="email" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Contato principal" value={contato} onChange={setContato} />
             <Field label="Cargo" value={cargo} onChange={setCargo} />
           </div>
           <div className="grid gap-1.5">
@@ -2365,6 +2484,126 @@ function EditEmpresaDialog({
               </p>
             )}
           </div>
+
+          {/* Contatos adicionais — outros sócios/pessoas de contato da mesma empresa */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Contatos adicionais {contatosExtras.length > 0 && `(${contatosExtras.length})`}
+              </Label>
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-[11px]" onClick={addContatoExtra}>
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar contato
+              </Button>
+            </div>
+            {contatosExtras.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Nenhum contato adicional. Use "Adicionar contato" se houver mais de um sócio ou pessoa de contato.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {contatosExtras.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-border/50 bg-card p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Contato adicional
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                        onClick={() => removeContatoExtra(c.id)}
+                        title="Remover este contato"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        value={c.nome ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { nome: ev.target.value })}
+                        placeholder="Nome"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.cargo ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { cargo: ev.target.value })}
+                        placeholder="Cargo"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.telefone ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { telefone: ev.target.value })}
+                        placeholder="Telefone"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.email ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { email: ev.target.value })}
+                        placeholder="E-mail"
+                        type="email"
+                        className="h-8 text-[12px]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Grupo econômico — matriz/filiais do mesmo CNPJ raiz, com atalho clicável */}
+          {unidadesGrupo.length > 0 && (
+            <div className="rounded-xl border border-navy-deep/20 bg-navy-deep/5 p-3">
+              <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-navy-deep">
+                Grupo econômico — {unidadesGrupo.length} unidades
+              </Label>
+              <ul className="space-y-1.5">
+                {unidadesGrupo.map((u) => {
+                  const ehAtual = u.id === empresa?.id;
+                  const detalhes = [unidadeLabel(u.cnpj), cidadeUfDoTexto(u.textoBruto), u.telefone]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        disabled={ehAtual}
+                        onClick={() => trocarParaUnidade(u)}
+                        className={
+                          "w-full rounded-lg border px-2.5 py-1.5 text-left transition " +
+                          (ehAtual
+                            ? "cursor-default border-navy-deep/40 bg-navy-deep/10"
+                            : "border-border/50 bg-card hover:border-navy-deep/40 hover:bg-primary/5")
+                        }
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[12px] font-semibold text-navy-deep">{u.nome}</span>
+                          {unidadeLabel(u.cnpj) && (
+                            <span className="rounded-full bg-navy-deep/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-navy-deep">
+                              {unidadeLabel(u.cnpj)}
+                            </span>
+                          )}
+                          {ehAtual && (
+                            <span className="rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                              editando agora
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {detalhes || "Sem dados adicionais"}
+                        </p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                Clique em outra unidade para abrir a edição dela (suas alterações aqui são salvas antes de trocar).
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
               <Label className="text-[11px]">UF</Label>
