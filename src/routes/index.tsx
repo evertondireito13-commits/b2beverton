@@ -106,6 +106,7 @@ import {
   Loader2,
   Send,
   Upload,
+  Pencil,
   Mic,
   Square,
   Check,
@@ -248,6 +249,85 @@ export function CopyButton({
       {!compact && (copied ? "Copiado!" : label)}
     </Button>
   );
+}
+
+// ------- Identidade visual do cabeçalho (logo, nome e foto do consultor) -------
+// Guardada no localStorage para que o operador possa trocar quando quiser,
+// sem depender de deploy. Os arquivos padrão (logo-hezus.png e
+// everton-pereira.png) devem existir em /public no repositório.
+const BRANDING_EVENT = "bhm:branding-updated";
+const LOGO_IMG_KEY = "bhm-custom-logo-img";
+const LOGO_NAME_KEY = "bhm-custom-logo-name";
+const DEFAULT_LOGO_IMG = "/logo-hezus.png";
+const DEFAULT_LOGO_NAME = "HEZUS CAPITAL & TRIBUTOS";
+
+// Foto padrão por consultor — chave é o nome exato salvo na sessão de login.
+const DEFAULT_AVATAR_IMG: Record<string, string> = {
+  "Everton Pereira": "/everton-pereira.png",
+};
+
+function loadCustomLogoImg(): string {
+  if (typeof window === "undefined") return DEFAULT_LOGO_IMG;
+  try {
+    return window.localStorage.getItem(LOGO_IMG_KEY) || DEFAULT_LOGO_IMG;
+  } catch {
+    return DEFAULT_LOGO_IMG;
+  }
+}
+function saveCustomLogoImg(dataUrl: string) {
+  try {
+    window.localStorage.setItem(LOGO_IMG_KEY, dataUrl);
+    window.dispatchEvent(new Event(BRANDING_EVENT));
+  } catch {
+    /* quota */
+  }
+}
+function loadCustomLogoName(): string {
+  if (typeof window === "undefined") return DEFAULT_LOGO_NAME;
+  try {
+    return window.localStorage.getItem(LOGO_NAME_KEY) || DEFAULT_LOGO_NAME;
+  } catch {
+    return DEFAULT_LOGO_NAME;
+  }
+}
+function saveCustomLogoName(name: string) {
+  try {
+    window.localStorage.setItem(LOGO_NAME_KEY, name);
+    window.dispatchEvent(new Event(BRANDING_EVENT));
+  } catch {
+    /* quota */
+  }
+}
+function avatarKey(consultor: string): string {
+  return `bhm-custom-avatar::${consultor}`;
+}
+function loadCustomAvatarImg(consultor: string | null): string | null {
+  if (!consultor) return null;
+  if (typeof window !== "undefined") {
+    try {
+      const custom = window.localStorage.getItem(avatarKey(consultor));
+      if (custom) return custom;
+    } catch {
+      /* ignore */
+    }
+  }
+  return DEFAULT_AVATAR_IMG[consultor] ?? null;
+}
+function saveCustomAvatarImg(consultor: string, dataUrl: string) {
+  try {
+    window.localStorage.setItem(avatarKey(consultor), dataUrl);
+    window.dispatchEvent(new Event(BRANDING_EVENT));
+  } catch {
+    /* quota */
+  }
+}
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 export const Route = createFileRoute("/")({
@@ -695,34 +775,166 @@ function LoginScreen({ onLogged }: { onLogged: (c: "Everton Pereira" | "Eloane M
 
 export function AppHeader({ current: _current }: { current: "pre-or-pos" | "relatorio" }) {
   const [consultor, setConsultor] = useState<string | null>(null);
+  const [logoImg, setLogoImg] = useState<string>(DEFAULT_LOGO_IMG);
+  const [logoName, setLogoName] = useState<string>(DEFAULT_LOGO_NAME);
+  const [avatarImg, setAvatarImg] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(DEFAULT_LOGO_NAME);
+
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const logoFileRef = useRef<HTMLInputElement | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     setConsultor(getSessionConsultor());
     const onChange = () => setConsultor(getSessionConsultor());
     window.addEventListener("bhm:session-changed", onChange);
     return () => window.removeEventListener("bhm:session-changed", onChange);
   }, []);
+
+  // Carrega logo/nome/foto salvos (ou os padrões da Hezus/Everton) e escuta
+  // trocas feitas pelo próprio operador em tempo real.
+  useEffect(() => {
+    function syncBranding() {
+      setLogoImg(loadCustomLogoImg());
+      setLogoName(loadCustomLogoName());
+      setAvatarImg(loadCustomAvatarImg(getSessionConsultor()));
+    }
+    syncBranding();
+    window.addEventListener(BRANDING_EVENT, syncBranding);
+    window.addEventListener("bhm:session-changed", syncBranding);
+    return () => {
+      window.removeEventListener(BRANDING_EVENT, syncBranding);
+      window.removeEventListener("bhm:session-changed", syncBranding);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!editingName) return;
+    setNameDraft(logoName);
+    // Foco via ref (mais confiável que contentEditable entre navegadores).
+    requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+  }, [editingName, logoName]);
+
+  async function handleLogoFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      saveCustomLogoImg(dataUrl);
+      setLogoImg(dataUrl);
+      toast.success("Logo atualizada.");
+    } catch {
+      toast.error("Não foi possível carregar essa imagem.");
+    }
+  }
+
+  async function handleAvatarFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !consultor) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      saveCustomAvatarImg(consultor, dataUrl);
+      setAvatarImg(dataUrl);
+      toast.success("Foto atualizada.");
+    } catch {
+      toast.error("Não foi possível carregar essa imagem.");
+    }
+  }
+
+  function confirmNameEdit() {
+    const next = nameDraft.trim() || DEFAULT_LOGO_NAME;
+    saveCustomLogoName(next);
+    setLogoName(next);
+    setEditingName(false);
+  }
+
   return (
     <header className="sticky top-0 z-30 border-b border-border/60 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
       <div className="mx-auto grid w-full max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5 sm:px-4 md:gap-6 md:px-6 md:py-3 2xl:max-w-[1680px]">
-        <Link
-          to="/"
-          search={{ tab: "pre" }}
-          className="flex min-w-0 items-center gap-2 rounded-xl -mx-1 px-1 py-0.5 transition-colors hover:bg-muted/60 sm:gap-3"
-          aria-label="Ir para a Pré-ligação"
-        >
-          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-elegant">
-            <BhmDiamond className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <div className="min-w-0 leading-tight">
-            <div className="truncate font-display text-[14px] tracking-tight text-foreground sm:text-[15px]">
-              BHM&nbsp;
+        <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
+          <Link
+            to="/"
+            search={{ tab: "pre" }}
+            className="flex min-w-0 items-center gap-2 rounded-xl -mx-1 px-1 py-0.5 transition-colors hover:bg-muted/60 sm:gap-3"
+            aria-label="Ir para a Pré-ligação"
+          >
+            <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-primary text-primary-foreground shadow-elegant">
+              <img
+                src={logoImg}
+                alt="Logo"
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = DEFAULT_LOGO_IMG;
+                }}
+              />
             </div>
-            <div className="hidden text-[10px] font-medium tracking-[0.24em] text-muted-foreground uppercase sm:block">
-              PROSPECÇÃO B2B
+            <div className="min-w-0 leading-tight">
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onClick={(e) => e.preventDefault()}
+                  onBlur={confirmNameEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      confirmNameEdit();
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditingName(false);
+                    }
+                  }}
+                  className="w-40 max-w-[45vw] truncate rounded border border-border bg-background px-1 py-0.5 font-display text-[13px] tracking-tight text-foreground sm:text-[14px]"
+                />
+              ) : (
+                <div className="truncate font-display text-[14px] tracking-tight text-foreground sm:text-[15px]">
+                  {logoName}
+                </div>
+              )}
+              <div className="hidden text-[10px] font-medium tracking-[0.24em] text-muted-foreground uppercase sm:block">
+                PROSPECÇÃO B2B
+              </div>
             </div>
+          </Link>
 
+          {/* Trocar logo / renomear — sempre disponível, sem depender de deploy */}
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => logoFileRef.current?.click()}
+              className="grid h-6 w-6 place-items-center rounded-full text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground"
+              title="Trocar logo"
+              aria-label="Trocar logo"
+            >
+              <Upload className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingName((v) => !v)}
+              className="grid h-6 w-6 place-items-center rounded-full text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground"
+              title="Renomear"
+              aria-label="Renomear"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+            <input
+              ref={logoFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleLogoFileChange}
+            />
           </div>
-        </Link>
+        </div>
+
         <div className="flex shrink-0 items-center gap-1.5 text-right sm:gap-2 md:gap-3">
           <ThemeToggle />
           <div className="hidden leading-tight lg:block">
@@ -733,9 +945,35 @@ export function AppHeader({ current: _current }: { current: "pre-or-pos" | "rela
               ADVOGADO
             </div>
           </div>
-          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent text-sm font-semibold text-accent-foreground">
-            {consultor ? consultor.split(" ").map((s) => s[0]).slice(0, 2).join("") : ""}
+
+          {/* Avatar do consultor — foto quando disponível, iniciais como fallback.
+              Sempre pode ser trocada pelo botão de upload no canto. */}
+          <div className="relative h-9 w-9 shrink-0">
+            <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full bg-accent text-sm font-semibold text-accent-foreground">
+              {avatarImg ? (
+                <img src={avatarImg} alt={consultor ?? "Avatar"} className="h-full w-full object-cover" />
+              ) : consultor ? (
+                consultor.split(" ").map((s) => s[0]).slice(0, 2).join("")
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => avatarFileRef.current?.click()}
+              className="absolute -bottom-0.5 -right-0.5 grid h-4 w-4 place-items-center rounded-full border border-background bg-muted text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground"
+              title="Trocar foto"
+              aria-label="Trocar foto"
+            >
+              <Upload className="h-2.5 w-2.5" />
+            </button>
+            <input
+              ref={avatarFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarFileChange}
+            />
           </div>
+
           {consultor ? (
             <>
               <AlertDialog>
@@ -808,40 +1046,6 @@ export function AppFooter() {
 
       </div>
     </footer>
-  );
-}
-
-function BhmDiamond({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 100 100"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-    >
-      <rect
-        x="50"
-        y="6"
-        width="62.2"
-        height="62.2"
-        transform="rotate(45 50 6)"
-        rx="2"
-      />
-      <text
-        x="50"
-        y="62"
-        textAnchor="middle"
-        fontFamily="'Cormorant Garamond', serif"
-        fontSize="46"
-        fontWeight="500"
-        fill="currentColor"
-        stroke="none"
-      >
-        B
-      </text>
-    </svg>
   );
 }
 
