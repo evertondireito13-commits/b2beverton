@@ -1,107 +1,128 @@
-[CONTEXT.md](https://github.com/user-attachments/files/32080360/CONTEXT.md)
-# CONTEXT.md — b2beverton (BHM — Central de Prospecção)
+[CONTEXT.md](https://github.com/user-attachments/files/32084014/CONTEXT.md)
+# CONTEXT.md — Painel Central de Prospecção (b2beverton)
 
-> **Convenção:** quando Everton mandar "SALVAR" sozinho numa mensagem, o Claude deve reescrever este arquivo por completo e entregá-lo como arquivo para colar no GitHub.
-
----
-
-## 🧭 Sobre o projeto
-
-Painel B2B de prospecção para um escritório de advocacia tributária, cobrindo todo o ciclo de prospecção:
-**Pré-ligação → Pós-ligação → Preparação Noturna → Painel Executivo → Follow-ups → Central de Reuniões (CRM)**.
-
-**Stack:** React/TypeScript + TanStack Start + Supabase, deploy via Lovable.
-**Fluxo de trabalho:** Lovable AI está sem créditos → todas as alterações são feitas manualmente pelo **editor web do GitHub**. Por isso, toda entrega de código deve ser **arquivo completo pronto para colar**, nunca snippet ou instrução de find-and-replace.
-
-**Perfil do Everton:** não-técnico, não localiza trechos de código dentro de arquivos grandes. Comunica urgência/frustração em CAIXA ALTA.
-
-**Busca no GitHub:** usar `repo:evertondireito13-commits/b2beverton <termo>` (não usar o buscador de arquivo "T" da página).
-
-**Limitação do Claude:** não consegue puxar arquivos crus (raw) do GitHub diretamente por causa de rate limit em acesso sem login e o repositório é privado — Everton precisa colar o conteúdo dos arquivos ou, quando possível, o link raw funciona pontualmente mas não é garantido.
+**Última atualização:** via palavra-chave "SALVAR"
 
 ---
 
-## 📖 Glossário (termos de domínio)
+## Propósito & contexto
 
-- `historico` — log de histórico de ligações
-- `pós-ligação` — pós-ligação
-- `sem interesse` — recusa comercial
-- `follow-up frio` — fila de follow-up frio
-- `Central de Reuniões` — hub/CRM de reuniões
-- `arquivado` — removido da fila ativa
-- `decisor` — pessoa que decide
-- `portaria` — recepcionista / barreira de acesso
+A Hezus Capital & Tributos está construindo um sistema de prospecção B2B chamado
+**"Painel Central de Prospecção" / b2beverton**, hospedado em
+`github.com/evertondireito13-commits/b2beverton`. Stack: Lovable + React +
+TanStack Router + Supabase. O sistema gira em torno de um pipeline noturno de
+preparação em múltiplos estágios ("Preparação Noturna"):
+**Descobrir → Validar → Enriquecer → Pontuar**, com três telas interligadas:
+Pré-ligação, Pós-ligação e uma camada de gestão de follow-up/pipeline.
 
----
-
-## ⚠️ ALERTA URGENTE (aberto) — Regressão em `hydrateFromCloud`
-
-**Arquivo:** `src/lib/cloud-store.ts`
-
-Foi confirmado nesta sessão que a função `hydrateFromCloud` **regrediu** para o comportamento com bug original: ela volta a sobrescrever o `localStorage` diretamente, sem mesclar por `id`:
-
-```ts
-window.localStorage.setItem(localKey("historico", consultor), JSON.stringify(historicos));
-window.localStorage.setItem(localKey("leads", consultor), JSON.stringify(leadList));
-```
-
-**Risco:** se a nuvem (Supabase) estiver vazia ou incompleta no momento da consulta, esse `setItem` **apaga dados locais válidos** — exatamente o bug de "empresas sumindo" que já tinha sido corrigido antes.
-
-**Causa provável:** o Lovable AI sobrescreveu o arquivo em uma edição posterior à correção (merge por `id` + reenvio de itens só-locais foi perdido).
-
-**Status:** correção **ainda não reaplicada** — aguardando confirmação do Everton para:
-1. Reaplicar a correção agora (mesclagem por `id`, sem apagar dados locais quando a nuvem vier vazia/incompleta), **ou**
-2. Terminar de revisar o resto do repositório antes.
-
-👉 **Próxima ação recomendada:** reaplicar o fix em `cloud-store.ts` assim que possível — é risco ativo de perda de dados, não é só um bug cosmético.
+Toda comunicação é em **português do Brasil (pt-BR)**. Este arquivo
+(`CONTEXT.md`) fica na raiz do repositório e é atualizado sob demanda ao
+digitar a palavra-chave **"SALVAR"**.
 
 ---
 
-## ✅ Estado atual (concluído)
+## Estado atual
 
-- **`pos-ligacao.tsx` — bug "sem interesse" não arquivava (Problema 2):** corrigido. Um booleano unificado `negativaDetectada` (baseado em `textoIndicaNegativaComercial`, aplicado tanto à transcrição quanto ao histórico gerado) agora controla arquivamento, cancelamento de follow-up e status do lead na Central de Reuniões de forma consistente.
-
-- **`FloatingNotepad.tsx`:** bloco de notas flutuante completo — abas, persistência via localStorage, arrastar, colapsar em bolha, copiar, baixar. Renderizando em `__root.tsx` em todas as páginas.
-
-- **Enriquecer via CNPJ:** causa raiz era incompatibilidade de `AbortSignal.timeout` no runtime do servidor; corrigido com `AbortController` + `setTimeout`. Preenche Telefone, E-mail, Razão Social e bloco estruturado de Observações, sempre preservando campos preenchidos manualmente.
-
-- **Tema visual (`styles.css`):** paleta neon misturada substituída por identidade azul unificada em `:root` (claro) e `.dark` (escuro). `.noir` mantido como alias silencioso de `.dark`. Fontes unificadas em Inter.
-
-- **"Descobrir Empresas" (`descoberta-empresas.functions.ts`):** reescrito com dicionário português→tags OSM (~30 tipos de negócio), corrigindo buscas que usavam nome literal em vez de tag OSM.
-
-- **Drag-and-drop em Preparação Noturna:** as "Pastas" agora usam arrastar de verdade (drag-and-drop real), com o ícone de grip ⠿ (mesmo estilo do menu "PROSPECTAR"), sempre visível (não depende de hover) e funcional em celular. Entregue como arquivo `preparacao-noturna.tsx` completo.
+- Pipeline principal e as três telas centrais estão funcionais e já passaram
+  por várias rodadas de correção e refinamento.
+- **Identidade visual do cabeçalho (concluído nesta sessão):**
+  - Arquivo alterado: `src/routes/index.tsx`, função `AppHeader`.
+  - Logo trocada de "BHM" (losango com a letra B) para a logo da Hezus
+    (`/public/logo-hezus.png`) + texto **"HEZUS CAPITAL & TRIBUTOS"**
+    (subtítulo "PROSPECÇÃO B2B" mantido).
+  - Avatar do consultor: as iniciais ("EP") foram substituídas pela foto do
+    Everton (`/public/everton-pereira.png`) como padrão; nome/cargo
+    (Everton Pereira · ADVOGADO) seguem vindos da sessão de login, sem
+    alteração de lógica.
+  - Ambos (logo+nome e foto do avatar) agora são **editáveis pelo próprio
+    operador a qualquer momento**, via botão de upload (ícone de seta para
+    cima) e — no caso do nome — um ícone de lápis para renomear inline.
+    As trocas ficam salvas no `localStorage` do navegador:
+    - `bhm-custom-logo-img` / `bhm-custom-logo-name` (globais)
+    - `bhm-custom-avatar::<nome do consultor>` (por consultor — Everton e
+      Eloane guardam fotos separadas)
+  - Função antiga `BhmDiamond` (SVG do losango "B") foi removida por não ser
+    mais usada.
+  - Pré-requisito: os arquivos `logo-hezus.png` e `everton-pereira.png`
+    precisam existir em `public/` no repositório (já enviados via GitHub
+    web upload).
+- Bugs recentes resolvidos:
+  - **Dados obsoletos ao carregar empresa**: dados antigos (CNPJ, script,
+    telefones, estado do lead) não eram limpos ao carregar nova empresa em
+    Pré-ligação/Pós-ligação — corrigido via `limparRascunhoPre()` + limpeza
+    de listeners de evento.
+  - **Arquivamento sem confirmação em "sem interesse"**: empresas eram
+    auto-arquivadas sem confirmação do operador — corrigido com estado
+    `arquivarConfirm` + `AlertDialog` exigindo confirmação explícita antes
+    de disparar `PREPARACAO_REALIZADA_EVENT`.
+- **Pendente**: função de exportação de "pastas" de empresas na Preparação
+  Noturna, com suporte a múltiplos formatos, cobrindo os campos: Nome,
+  Razão Social, CNPJ, Telefone, Contato, Cargo, E-mail, Verificar, UF,
+  Setor e Regime Tributário. O arquivo `preparacao-noturna.tsx` foi pedido
+  antes de a implementação começar — ainda não concluída.
+- **Parcialmente iniciado / pausado**: remoção dos campos de CRM RD Station
+  das telas de pré-ligação e pós-ligação.
 
 ---
 
-## 🔜 Em andamento / próximos passos
+## No horizonte
 
-1. **Corrigir a regressão de `hydrateFromCloud`** (ver alerta urgente acima) — prioridade máxima.
-2. **Expandir drag-and-drop para outros pontos estratégicos do app** — Everton pediu para aplicar o mesmo padrão de arrastar (ícone ⠿) em outras telas além de Preparação Noturna. Ainda faltam:
-   - Identificar o arquivo do menu "PROSPECTAR" (provavelmente `app-sidebar.tsx`, `main-nav.tsx` ou similar) — precisa do conteúdo/raw URL do arquivo para confirmar se já é arrastável.
-   - Levantar outras telas candidatas: cards da Central de Reuniões, colunas/etapas do pipeline, checklists de módulos.
-3. **Validação do estágio "Pontuar" em Preparação Noturna:** investigar possível descompasso assíncrono/síncrono na forma como `scoreEmpresas()` é chamado (`src/lib/lead-score.ts`).
-
----
-
-## 📌 Aprendizados e princípios fixos
-
-- **NUNCA mexer no fluxo `textoBruto` / `parseDadosCnpj`** (preenchimento automático a partir de dados brutos colados) — restrição definitiva do Everton.
-- Bugs costumam vir de lógica aplicada de forma inconsistente entre partes do código (foi assim no bug "sem interesse" e no enriquecimento de CNPJ) — sempre diagnosticar a causa raiz antes de corrigir.
-- Cuidado com regressões: correções já aplicadas podem ser desfeitas por edições posteriores (como aconteceu com `hydrateFromCloud`) — vale reconferir arquivos críticos periodicamente.
-- Layout e tema padrão importam: visibilidade da sidebar e tema padrão (`dark`, não `noir`) precisaram de correção explícita.
-- **Sempre entregar arquivos completos de substituição** — nunca trechos, diffs ou instruções de find-and-replace.
+- Concluir a exportação multi-formato das pastas da Preparação Noturna
+  (precisa de `preparacao-noturna.tsx` como entrada).
+- Retomar e concluir a remoção dos campos do RD Station CRM em Pré-ligação
+  e Pós-ligação.
+- Validar visualmente a nova identidade do cabeçalho (logo Hezus + foto do
+  Everton) em produção e ajustar caso alguma imagem não carregue.
 
 ---
 
-## 🗂️ Arquivos-chave frequentemente referenciados
+## Aprendizados & princípios-chave
 
-- `src/components/preparacao-noturna.tsx`
-- `src/components/pos-ligacao.tsx`
-- `src/components/FloatingNotepad.tsx`
-- `src/lib/cnpj-enriquecimento.functions.ts`
-- `src/lib/descoberta-empresas.functions.ts`
-- `src/lib/cloud-store.ts` ⚠️ (regressão ativa — ver alerta acima)
-- `src/lib/lead-score.ts`
-- `src/routes/index.tsx`
-- `src/routes/__root.tsx`
-- `src/styles.css`
+- Empresas só chegam ao estágio "Pontuar" após ligações registradas — esse
+  é o comportamento correto e intencional.
+- A integração com a Overpass API para "Descobrir Empresas" precisa de
+  failover entre múltiplos espelhos (overpass-api.de → overpass.kumi.systems
+  → overpass.openstreetmap.ru) por instabilidade.
+- Eventos de ponteiro que "sequestram" o drag em cabeçalhos de UI flutuante
+  podem bloquear cliques em botões silenciosamente — resolvido com
+  `onPointerDown={(e) => e.stopPropagation()}` nos botões filhos.
+- `contentEditable` para renomear inline é pouco confiável entre
+  navegadores; um `<input>` com ref e foco/seleção programáticos no mount é
+  mais robusto (aplicado tanto no nome editável do cabeçalho quanto em
+  outros componentes do projeto).
+- Ao subir arquivos estáticos para `public/` via upload do GitHub, o nome
+  do arquivo pode duplicar a extensão (ex: `logo-hezus.png.png`) — sempre
+  conferir e corrigir via "rename" antes de referenciar o caminho no código.
+
+---
+
+## Abordagem & padrões
+
+- **Formato de entrega de código**: Hezus quer **arquivos completos,
+  prontos para colar** — sem explicações, sem diffs parciais, sem
+  instruções de find-and-replace. Preferência explícita: código completo
+  sempre ("GOSTO DO COPIA E COLA MUDAR TUDO NAO SO AS PARTES PRECISO DO
+  CODIGO COMPLETO").
+- **Fluxo de trabalho no GitHub**: todas as edições são feitas
+  exclusivamente pela **interface web do GitHub** (nunca localmente).
+  Fluxo: Claude gera arquivo completo → pessoa abre o arquivo no GitHub →
+  Ctrl+A → apagar → colar → commit na main.
+- **Cuidado com caminho de arquivo**: a interface de criação de arquivos do
+  GitHub pode duplicar segmentos de caminho silenciosamente (ex:
+  `src/components/src/components/`) ou duplicar extensões em uploads
+  (ex: `.png.png`) — sempre verificar o nome/caminho final antes de seguir.
+- **Método de recuperação**: quando arquivos são sobrescritos por engano,
+  usar "Browse files" de um commit anterior no GitHub para recuperar a
+  versão correta.
+- Antes de gerar novas funcionalidades, Claude deve pedir o arquivo
+  existente relevante para entender a estrutura de dados atual.
+
+---
+
+## Ferramentas & recursos
+
+- **Stack**: React, TanStack Router, Supabase, Lovable
+- **Repo**: `github.com/evertondireito13-commits/b2beverton`
+- **Mapas/descoberta**: OpenStreetMap + Overpass API (failover multi-espelho)
+- **Identidade visual**: `public/logo-hezus.png`, `public/everton-pereira.png`
+- **Contexto persistente**: `CONTEXT.md` na raiz, atualizado via palavra-chave "SALVAR"
