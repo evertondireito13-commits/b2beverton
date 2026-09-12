@@ -1590,9 +1590,22 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
           </div>
         </header>
 
-        {/* Métricas */}
+        {/* Métricas — clicáveis: aplicam o filtro de status correspondente e trocam de aba quando preciso */}
         <div className="grid grid-cols-3 gap-4 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setAba("ativas");
+              setFiltroStatus((atual) => (atual === "pending" ? "" : "pending"));
+            }}
+            title="Filtrar pelas empresas pendentes"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "ativas" && filtroStatus === "pending"
+                ? "border-amber-400/60 bg-amber-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400/10 text-amber-300">
               <Loader2 className="h-5 w-5" />
             </div>
@@ -1600,8 +1613,21 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Pendentes</p>
               <p className="font-hub text-2xl font-bold text-hub-text">{pendentes}</p>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAba("ativas");
+              setFiltroStatus((atual) => (atual === "realizada" ? "" : "realizada"));
+            }}
+            title="Filtrar pelas empresas já realizadas"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "ativas" && filtroStatus === "realizada"
+                ? "border-emerald-400/60 bg-emerald-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">
               <Check className="h-5 w-5" />
             </div>
@@ -1609,8 +1635,21 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Realizadas</p>
               <p className="font-hub text-2xl font-bold text-hub-text">{realizadas}</p>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAba((atual) => (atual === "sem_interesse" ? "ativas" : "sem_interesse"));
+              setFiltroStatus("");
+            }}
+            title="Ver a lista de empresas sem interesse / reabordagem"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "sem_interesse"
+                ? "border-rose-400/60 bg-rose-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
             <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-400/10 text-rose-300">
               <X className="h-5 w-5" />
             </div>
@@ -1618,7 +1657,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Sem interesse</p>
               <p className="font-hub text-2xl font-bold text-hub-text">{semInteresse.length}</p>
             </div>
-          </div>
+          </button>
         </div>
 
         <div className="flex flex-col md:flex-row">
@@ -1772,7 +1811,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               )}
             </div>
 
-            {/* Barra unificada: esteira (filtro rápido por etapa) + busca/filtros + enriquecer */}
+            {/* Barra unificada: esteira (filtro rápido por etapa) + busca em destaque + filtros secundários + enriquecer */}
             <div className="space-y-3 border-b border-hub-line/50 bg-hub-surface/30 px-6 py-3">
               {/* Linha 1 — esteira, compacta */}
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1809,9 +1848,9 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 )}
               </div>
 
-              {/* Linha 2 — busca, filtros e enriquecer */}
+              {/* Linha 2 — busca (destaque, sempre em primeiro) + ação de enriquecer, separada dos filtros */}
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative min-w-[200px] flex-1">
+                <div className="relative min-w-[240px] flex-1">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-hub-muted" />
                   <input
                     value={filtroBusca}
@@ -1820,13 +1859,34 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                     className="w-full rounded-lg border border-hub-line/60 bg-hub-surface py-2 pl-9 pr-3 text-[13px] text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
                   />
                 </div>
+                <button
+                  type="button"
+                  disabled={enriquecendo}
+                  onClick={() => void enriquecerCnpjs()}
+                  title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+                  className="flex shrink-0 items-center gap-2 rounded-lg bg-hub-raised px-3.5 py-2 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
+                >
+                  {enriquecendo ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-4 w-4 text-hub-gold" />
+                  )}
+                  {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+                </button>
+              </div>
+
+              {/* Linha 3 — filtros secundários (usados com menos frequência que a busca) */}
+              <div className="flex flex-wrap items-center gap-2.5 border-t border-hub-line/40 pt-2.5">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                  Filtrar por:
+                </span>
                 <select
                   value={filtroStatus}
                   onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
                   title="Filtrar por status"
                   className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
                 >
-                  <option value="">Todas</option>
+                  <option value="">Status: todas</option>
                   <option value="pending">Pendentes</option>
                   <option value="realizada">Realizadas</option>
                   <option value="sem_interesse">Sem interesse</option>
@@ -1874,20 +1934,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                     Limpar filtros
                   </button>
                 )}
-                <button
-                  type="button"
-                  disabled={enriquecendo}
-                  onClick={() => void enriquecerCnpjs()}
-                  title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
-                  className="ml-auto flex items-center gap-2 rounded-lg bg-hub-raised px-3.5 py-2 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
-                >
-                  {enriquecendo ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-4 w-4 text-hub-gold" />
-                  )}
-                  {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
-                </button>
               </div>
             </div>
 
