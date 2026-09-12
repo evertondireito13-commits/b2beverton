@@ -1036,12 +1036,15 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
       const alvo = alvos[i];
       setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
       // Pausa entre consultas (menos agressiva na primeira) para não
-      // estourar o limite de requisições por segundo da BrasilAPI.
-      if (i > 0) await aguardar(1200);
+      // estourar o limite de requisições por segundo da BrasilAPI. Mais
+      // espaçada do que antes porque o limite da API se mostrou mais
+      // apertado do que o esperado em listas grandes.
+      if (i > 0) await aguardar(2500);
 
+      const MAX_TENTATIVAS = 5;
       let tentativas = 0;
       let concluido = false;
-      while (!concluido && tentativas < 3) {
+      while (!concluido && tentativas < MAX_TENTATIVAS) {
         tentativas += 1;
         try {
           const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
@@ -1093,12 +1096,13 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                       : e.contatosExtras,
               };
             });
-          } else if (r.erro?.includes("429") && tentativas < 3) {
-            // Limite de requisições excedido — espera mais e tenta de novo.
+          } else if (r.erro?.includes("429") && tentativas < MAX_TENTATIVAS) {
+            // Limite de requisições excedido — espera cada vez mais (backoff
+            // exponencial: 3s, 6s, 12s, 24s) e tenta de novo antes de desistir.
             setProgressoEnriquecimento(
               `${i + 1}/${alvos.length} · ${alvo.nome} (aguardando limite da API…)`,
             );
-            await aguardar(4000 * tentativas);
+            await aguardar(3000 * 2 ** (tentativas - 1));
           } else {
             falhas += 1;
             concluido = true;
