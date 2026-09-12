@@ -2017,14 +2017,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                                 </span>
                               );
                             })()}
-                            {e.uf && (
-                              <span
-                                className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted"
-                                title={[e.uf, e.setor, e.regime].filter(Boolean).join(" · ") || "UF"}
-                              >
-                                {e.uf}
-                              </span>
-                            )}
                             {recusado ? (
                               <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
                                 <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
