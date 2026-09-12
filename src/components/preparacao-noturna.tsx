@@ -2136,13 +2136,17 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                                     : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
                             }
                           >
-                            <input
-                              type="checkbox"
-                              checked={selecionado}
-                              onChange={() => toggleSelecionado(e.id)}
-                              className="h-4 w-4 shrink-0 accent-[#e8c15a]"
+                            <label
+                              className="flex shrink-0 cursor-pointer items-center justify-center rounded-md p-1.5 hover:bg-hub-raised"
                               title="Selecionar para mover em lote"
-                            />
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selecionado}
+                                onChange={() => toggleSelecionado(e.id)}
+                                className="h-4 w-4 accent-[#e8c15a]"
+                              />
+                            </label>
                             <div className="min-w-0 flex-1">
                               <button
                                 type="button"
@@ -2449,6 +2453,10 @@ function EditEmpresaDialog({
   const [uf, setUf] = useState("");
   const [setor, setSetor] = useState("");
   const [regime, setRegime] = useState("");
+  // Recolhido por padrão — é o campo mais raramente reeditado depois do
+  // cadastro inicial, então não precisa ocupar 12 linhas de tela toda vez
+  // que o consultor só quer ajustar telefone/observações.
+  const [dadosBrutosAberto, setDadosBrutosAberto] = useState(false);
 
   useEffect(() => {
     if (!empresa) return;
@@ -2475,6 +2483,7 @@ function EditEmpresaDialog({
     setUf(empresa.uf || auto.uf || "");
     setSetor(empresa.setor || auto.setor || "");
     setRegime(empresa.regime || auto.regime || "");
+    setDadosBrutosAberto(false);
   }, [empresa]);
 
   // Ao colar/editar o texto bruto de uma empresa já existente, reprocessa e
@@ -2807,14 +2816,37 @@ function EditEmpresaDialog({
               className="text-sm"
             />
           </div>
-          <div className="grid gap-1.5">
-            <Label className="text-[11px]">Dados brutos (texto original)</Label>
-            <Textarea
-              rows={12}
-              value={textoBruto}
-              onChange={(e) => handleTextoBrutoChange(e.target.value)}
-              className="min-h-[240px] text-sm leading-relaxed"
-            />
+          <div className="rounded-xl border border-border/60 bg-muted/10">
+            <button
+              type="button"
+              onClick={() => setDadosBrutosAberto((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+              title={dadosBrutosAberto ? "Recolher" : "Expandir"}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Dados brutos (texto original)
+                {!dadosBrutosAberto && textoBruto.trim() && (
+                  <span className="ml-2 normal-case tracking-normal text-muted-foreground/70">
+                    — raramente precisa reeditar isso
+                  </span>
+                )}
+              </span>
+              {dadosBrutosAberto ? (
+                <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+            </button>
+            {dadosBrutosAberto && (
+              <div className="px-3 pb-3">
+                <Textarea
+                  rows={12}
+                  value={textoBruto}
+                  onChange={(e) => handleTextoBrutoChange(e.target.value)}
+                  className="min-h-[240px] text-sm leading-relaxed"
+                />
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter className="mt-4 flex flex-row items-center justify-between gap-2 sm:justify-between">
@@ -2965,12 +2997,13 @@ function SortableEmpresaRow({
         type="button"
         {...attributes}
         {...listeners}
-        className="shrink-0 cursor-grab touch-none rounded p-1 text-muted-foreground hover:text-navy-deep active:cursor-grabbing"
+        className="shrink-0 cursor-grab touch-none rounded-lg p-2 -ml-1.5 text-muted-foreground hover:bg-hub-raised hover:text-navy-deep active:cursor-grabbing"
         title="Arraste para reordenar"
         aria-label="Reordenar empresa"
       >
         <GripVertical className="h-3.5 w-3.5" />
       </button>
+      <span className="mr-1 h-6 w-px shrink-0 bg-hub-line/40" aria-hidden="true" />
       {children}
     </li>
   );
