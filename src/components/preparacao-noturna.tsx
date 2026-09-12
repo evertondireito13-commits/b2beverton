@@ -914,9 +914,21 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
     [list],
   );
-  const filtrosAtivos = !!(
-    filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime || filtroEtapa
-  );
+  // Lista dos filtros atualmente ativos — usada tanto pra saber SE tem
+  // filtro ativo (filtrosAtivos) quanto pra mostrar QUANTOS/QUAIS estão
+  // ativos (evita o consultor achar que a lista está vazia por engano
+  // quando na verdade esqueceu um filtro de UF/setor ligado).
+  const filtrosAtivosDetalhes = useMemo(() => {
+    const ativos: string[] = [];
+    if (filtroBusca.trim()) ativos.push("busca");
+    if (filtroStatus) ativos.push("status");
+    if (filtroUf) ativos.push("UF");
+    if (filtroSetor) ativos.push("setor");
+    if (filtroRegime) ativos.push("regime");
+    if (filtroEtapa) ativos.push("etapa");
+    return ativos;
+  }, [filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime, filtroEtapa]);
+  const filtrosAtivos = filtrosAtivosDetalhes.length > 0;
 
   /**
    * Contagem de empresas ativas por pasta, usada na barra lateral.
@@ -1841,9 +1853,9 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   <button
                     type="button"
                     onClick={() => setFiltroEtapa("")}
-                    className="text-[11px] font-medium text-hub-muted underline hover:text-hub-gold"
+                    className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 text-[11px] font-bold text-hub-muted transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
                   >
-                    limpar
+                    Limpar etapa
                   </button>
                 )}
               </div>
@@ -1880,6 +1892,14 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
                   Filtrar por:
                 </span>
+                {filtrosAtivos && (
+                  <span
+                    className="rounded-full bg-hub-gold/15 px-2.5 py-1 text-[10px] font-bold text-hub-gold"
+                    title={`Filtros ativos: ${filtrosAtivosDetalhes.join(", ")}`}
+                  >
+                    {filtrosAtivosDetalhes.length} filtro(s) ativo(s)
+                  </span>
+                )}
                 <select
                   value={filtroStatus}
                   onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
@@ -1929,7 +1949,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                   <button
                     type="button"
                     onClick={limparFiltros}
-                    className="text-xs font-medium text-hub-muted underline hover:text-hub-gold"
+                    className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1.5 text-xs font-bold text-hub-muted transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
                   >
                     Limpar filtros
                   </button>
@@ -1940,11 +1960,19 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             {/* Lista */}
             <div className="px-6 pb-6 pt-4">
               <div className="flex items-center justify-between pb-3">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
                   {empresasFiltradas.length} empresa(s)
+                  {filtrosAtivos && (
+                    <span
+                      className="rounded-full bg-hub-gold/15 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-hub-gold"
+                      title={`Filtros ativos: ${filtrosAtivosDetalhes.join(", ")}`}
+                    >
+                      {filtrosAtivosDetalhes.length} filtro(s) ativo(s)
+                    </span>
+                  )}
                 </span>
                 {empresasFiltradas.length > 0 && (
-                  <div className="flex items-center gap-3 text-[11px] font-semibold text-hub-muted">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold text-hub-muted">
                     <button
                       type="button"
                       onClick={() =>
@@ -1954,7 +1982,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                             : empresasFiltradas.map((x) => x.id),
                         )
                       }
-                      className="hover:text-hub-gold"
+                      className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 font-bold transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
                     >
                       Selecionar todas
                     </button>
@@ -1965,7 +1993,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                           empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
                         )
                       }
-                      className="hover:text-hub-gold"
+                      className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 font-bold transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
                     >
                       Só pendentes
                     </button>
