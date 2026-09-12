@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -466,6 +466,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     null,
   );
   const [seletorOpen, setSeletorOpen] = useState(false);
+  // Controla se a barra de ações em lote (copiar/mover selecionadas) está
+  // expandida. Fica recolhida por padrão para não poluir a tela — só mostra
+  // os controles completos quando o usuário pede.
+  const [barraLoteAberta, setBarraLoteAberta] = useState(false);
   const [filtroBusca, setFiltroBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
   const [filtroUf, setFiltroUf] = useState("");
@@ -1906,9 +1910,95 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                     >
                       Só pendentes
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setBarraLoteAberta((v) => !v)}
+                      title="Copiar ou mover as empresas selecionadas para outra data/pasta"
+                      className={
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold normal-case tracking-normal transition " +
+                        (barraLoteAberta
+                          ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
+                      }
+                    >
+                      Ações em lote
+                      {selecionados.length > 0 && (
+                        <span className="rounded-full bg-hub-gold/20 px-1.5 py-0.5 text-[10px] text-hub-gold">
+                          {selecionados.length}
+                        </span>
+                      )}
+                      {barraLoteAberta ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
                   </div>
                 )}
               </div>
+
+              {/* Barra de ações em lote — recolhida por padrão, expande sob demanda */}
+              {barraLoteAberta && empresasFiltradas.length > 0 && (
+                <div className="mb-4 flex flex-wrap items-center gap-4 rounded-2xl border border-hub-line bg-hub-raised/95 p-4 shadow-lg">
+                  <div className="flex items-center gap-3 border-r border-hub-line pr-4">
+                    <span className="text-sm font-bold text-hub-text">
+                      {selecionados.length} selecionada(s)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelecionados([])}
+                      className="rounded-md bg-hub-surface px-2.5 py-1 text-[10px] font-bold uppercase tracking-tight text-hub-muted hover:text-hub-text"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                    <select
+                      value={bulkMode}
+                      onChange={(ev) => setBulkMode(ev.target.value as "copiar" | "mover")}
+                      className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                    >
+                      <option value="copiar">Copiar (mantém aqui)</option>
+                      <option value="mover">Mover (remove daqui)</option>
+                    </select>
+                    <select
+                      value={bulkPasta}
+                      onChange={(ev) => {
+                        setBulkPasta(ev.target.value);
+                        if (ev.target.value) setBulkDate("");
+                      }}
+                      title="Enviar para uma pasta"
+                      className="max-w-[200px] rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                    >
+                      <option value="">Destino: pasta…</option>
+                      {pastas
+                        .filter((p) => `pasta:${p.id}` !== date)
+                        .map((p) => (
+                          <option key={p.id} value={`pasta:${p.id}`}>
+                            📁 {p.nome}
+                          </option>
+                        ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={bulkDate}
+                      onChange={(ev) => {
+                        setBulkDate(ev.target.value);
+                        if (ev.target.value) setBulkPasta("");
+                      }}
+                      title="Destino: data"
+                      className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
+                    />
+                  </div>
+                  <Button
+                    onClick={moverSelecionados}
+                    className="gap-2 rounded-xl bg-hub-gold px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+                  >
+                    <CalendarDays className="h-4 w-4" />
+                    Enviar
+                  </Button>
+                </div>
+              )}
 
               {empresasOrdenadas.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-16 text-center text-sm text-hub-muted">
@@ -2108,69 +2198,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
             </div>
           </div>
         </div>
-
-        {/* Barra flutuante de seleção em lote */}
-        {empresasFiltradas.length > 0 && (
-          <div className="sticky bottom-4 z-20 mx-auto flex w-[calc(100%-2rem)] max-w-4xl flex-wrap items-center gap-4 rounded-2xl border border-hub-line bg-hub-raised/95 p-4 shadow-2xl backdrop-blur-xl">
-            <div className="flex items-center gap-3 border-r border-hub-line pr-4">
-              <span className="text-sm font-bold text-hub-text">
-                {selecionados.length} selecionada(s)
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelecionados([])}
-                className="rounded-md bg-hub-surface px-2.5 py-1 text-[10px] font-bold uppercase tracking-tight text-hub-muted hover:text-hub-text"
-              >
-                Limpar
-              </button>
-            </div>
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-              <select
-                value={bulkMode}
-                onChange={(ev) => setBulkMode(ev.target.value as "copiar" | "mover")}
-                className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="copiar">Copiar (mantém aqui)</option>
-                <option value="mover">Mover (remove daqui)</option>
-              </select>
-              <select
-                value={bulkPasta}
-                onChange={(ev) => {
-                  setBulkPasta(ev.target.value);
-                  if (ev.target.value) setBulkDate("");
-                }}
-                title="Enviar para uma pasta"
-                className="max-w-[200px] rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
-              >
-                <option value="">Destino: pasta…</option>
-                {pastas
-                  .filter((p) => `pasta:${p.id}` !== date)
-                  .map((p) => (
-                    <option key={p.id} value={`pasta:${p.id}`}>
-                      📁 {p.nome}
-                    </option>
-                  ))}
-              </select>
-              <input
-                type="date"
-                value={bulkDate}
-                onChange={(ev) => {
-                  setBulkDate(ev.target.value);
-                  if (ev.target.value) setBulkPasta("");
-                }}
-                title="Destino: data"
-                className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
-              />
-            </div>
-            <Button
-              onClick={moverSelecionados}
-              className="gap-2 rounded-xl bg-hub-gold px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
-            >
-              <CalendarDays className="h-4 w-4" />
-              Enviar
-            </Button>
-          </div>
-        )}
 
         {seletorDialog}
         {importDialog}
