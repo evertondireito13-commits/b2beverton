@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
 import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
@@ -470,6 +470,12 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   // expandida. Fica recolhida por padrão para não poluir a tela — só mostra
   // os controles completos quando o usuário pede.
   const [barraLoteAberta, setBarraLoteAberta] = useState(false);
+  // Abre a barra de ações em lote sozinha assim que a primeira empresa é
+  // selecionada — evita que o consultor marque um checkbox e não perceba
+  // que existe uma ação disponível lá em cima. Só reage na TRANSIÇÃO de
+  // 0 para >0 selecionadas; se o consultor recolher manualmente depois,
+  // não força reabrir a cada novo checkbox marcado.
+  const selecionadosAnterioresRef = useRef(0);
   const [filtroBusca, setFiltroBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
   const [filtroUf, setFiltroUf] = useState("");
@@ -513,6 +519,13 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     window.addEventListener("bhm:session-changed", onSession);
     return () => window.removeEventListener("bhm:session-changed", onSession);
   }, []);
+
+  useEffect(() => {
+    if (selecionadosAnterioresRef.current === 0 && selecionados.length > 0) {
+      setBarraLoteAberta(true);
+    }
+    selecionadosAnterioresRef.current = selecionados.length;
+  }, [selecionados.length]);
 
   /** Cria ou renomeia uma pasta (carteira) de empresas. */
   function salvarPasta() {
@@ -2160,24 +2173,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button size="sm" variant="ghost" className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text" title="Mudar data">
-                                    <CalendarDays className="h-3.5 w-3.5" />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
-                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
-                                    Mover para outro dia
-                                  </div>
-                                  <Input
-                                    type="date"
-                                    defaultValue={date}
-                                    onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
-                                    className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
-                                  />
-                                </PopoverContent>
-                              </Popover>
+                              <MudarDataPopover
+                                dataAtual={date}
+                                onConfirmar={(novaData) => moveToDate(e.id, novaData)}
+                              />
                               <Button
                                 size="sm"
                                 variant="ghost"
@@ -2780,6 +2779,69 @@ function EditEmpresaDialog({
   );
 }
 
+
+/**
+ * Popover de "mudar data" com confirmação explícita — antes, a data
+ * escolhida disparava a mudança imediatamente no onChange do calendário,
+ * o que fazia um toque errado no celular já mover a empresa sem querer.
+ * Agora escolher a data só atualiza o campo; é preciso clicar em confirmar.
+ */
+function MudarDataPopover({
+  dataAtual,
+  onConfirmar,
+}: {
+  dataAtual: string;
+  onConfirmar: (novaData: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [dataEscolhida, setDataEscolhida] = useState(dataAtual);
+
+  return (
+    <Popover
+      open={aberto}
+      onOpenChange={(v) => {
+        setAberto(v);
+        if (v) setDataEscolhida(dataAtual);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+          title="Mudar data"
+        >
+          <CalendarDays className="h-3.5 w-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
+          Mover para outro dia
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="date"
+            value={dataEscolhida}
+            onChange={(ev) => setDataEscolhida(ev.target.value)}
+            className="h-8 w-[135px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
+          />
+          <Button
+            size="sm"
+            disabled={!dataEscolhida || dataEscolhida === dataAtual}
+            onClick={() => {
+              onConfirmar(dataEscolhida);
+              setAberto(false);
+            }}
+            title="Confirmar nova data"
+            className="h-8 shrink-0 gap-1 bg-hub-gold px-2.5 text-[11px] font-bold text-hub-gold-ink hover:bg-hub-gold/90"
+          >
+            <Check className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function Field({
   label,
