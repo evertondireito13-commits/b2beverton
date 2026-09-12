@@ -670,7 +670,7 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         persist(nextList);
         if (irmas.length > 0) {
           toast.success(
-            `${unidadeLabel(dados.cnpj) ?? "Unidade"} unificada ao grupo ${nome} — ${irmas.length + 1} unidades. Você escolhe qual usar ao enviar ao Pré.`,
+            `${unidadeLabel(dados.cnpj) ?? "Unidade"} unificada ao grupo ${nome} — ${irmas.length + 1} unidades. Você escolhe qual usar ao enviar ao Pré-ligação.`,
           );
         } else {
           toast.success(`Cadastrada: ${nome}`);
@@ -1989,31 +1989,28 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                             )}
                             {(() => {
                               const cnpjOk = cnpjValido(e.cnpj);
-                              const dadosOk = !!(e.uf && e.setor);
+                              const dadosOk = !!(e.uf && e.setor && e.regime);
                               const sc = scoreDaEmpresa(e);
                               const ligacaoOk = typeof sc === "number";
+                              const faltando = [
+                                !cnpjOk && "CNPJ",
+                                !dadosOk && "dados",
+                                !ligacaoOk && "ligação",
+                              ].filter(Boolean) as string[];
+                              const tudoOk = faltando.length === 0;
                               return (
                                 <span
-                                  className="flex shrink-0 items-center gap-2 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1"
-                                  title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
+                                  className={
+                                    "shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold " +
+                                    (tudoOk
+                                      ? "bg-emerald-400/10 text-emerald-300"
+                                      : "bg-amber-400/10 text-amber-300")
+                                  }
+                                  title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados (UF/setor/regime) ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
                                 >
-                                  {cnpjOk ? (
-                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                                  ) : (
-                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
-                                  )}
-                                  {dadosOk ? (
-                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                                  ) : (
-                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
-                                  )}
-                                  {ligacaoOk ? (
-                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
-                                  ) : (
-                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
-                                  )}
+                                  {tudoOk ? "Pronto para ligação" : `Faltando: ${faltando.join(", ")}`}
                                   {ligacaoOk && (
-                                    <span className="ml-1 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[11px] font-bold text-hub-gold">
+                                    <span className="ml-1.5 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[11px] font-bold text-hub-gold">
                                       {sc}
                                     </span>
                                   )}
