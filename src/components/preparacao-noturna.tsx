@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useNavigate } from "@tanstack/react-router";
-import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, MoreVertical } from "lucide-react";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -60,11 +60,11 @@ export const PENDING_PRE_LIGACAO_KEY = "bhm.pending-pre-ligacao";
 
 type EmpresaStatus = "pending" | "realizada" | "sem_interesse";
 
-// Um contato/sócio adicional, além do "Contato principal" (contato/cargo).
-// Usado quando a empresa tem mais de uma pessoa relevante (matriz com vários
-// sócios, financeiro + decisor, etc.).
+// Contato adicional (sócio/pessoa extra) além do "Contato principal" —
+// suporta as empresas que têm mais de um sócio/administrador relevante.
 export type ContatoExtra = {
-  nome: string;
+  id: string;
+  nome?: string;
   cargo?: string;
   telefone?: string;
   email?: string;
@@ -82,12 +82,14 @@ type Empresa = {
   contato?: string;
   cargo?: string;
   telefone?: string;
+  telefoneSecundario?: string;
   email?: string;
+  emailSecundario?: string;
+  contatosExtras?: ContatoExtra[];
   observacoes?: string;
   uf?: string;
   setor?: string;
   regime?: string;
-  contatosExtras?: ContatoExtra[];
 };
 
 const UFS_BR = [
@@ -454,6 +456,11 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const [bulkPasta, setBulkPasta] = useState<string>("");
   const [bulkMode, setBulkMode] = useState<"copiar" | "mover">("copiar");
   const [pastas, setPastas] = useState<PastaPreparacao[]>([]);
+  // Incrementado sempre que uma ação pode ter mudado a quantidade de empresas
+  // dentro de alguma pasta SEM mexer na lista da data/pasta ativa agora (ex.:
+  // copiar empresas selecionadas para outra pasta). Serve só para invalidar
+  // o cache de contagem por pasta (contagemPorPasta) de forma controlada.
+  const [pastaCountsVersion, setPastaCountsVersion] = useState(0);
   const [pastaDialog, setPastaDialog] = useState<{ id?: string; nome: string } | null>(null);
   const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
     null,
@@ -551,6 +558,20 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     toast.success("Pasta excluída");
   }
 
+  /** Reordena as pastas por arrastar-e-soltar (drag handle ⠿ em cada item). */
+  function onReorderPastas(ev: DragEndEvent) {
+    const activeId = String(ev.active.id);
+    const overId = ev.over ? String(ev.over.id) : null;
+    if (!overId || activeId === overId) return;
+    const ids = pastas.map((p) => p.id);
+    const from = ids.indexOf(activeId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(pastas, from, to);
+    setPastas(next);
+    savePastas(next);
+  }
+
 
   const persist = useCallback(
     (next: Empresa[], targetDate: string = date) => {
@@ -590,13 +611,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     try {
       const dados = parseDadosCnpj(texto);
       const nome = dados.razaoSocial || (await extractNome(texto));
-      // Se o texto bruto trouxe mais de um sócio/administrador, o primeiro
-      // vira o "Contato principal" (contato/cargo) e os demais entram como
-      // contatos extras — assim ninguém se perde quando a empresa tem mais
-      // de um sócio listado.
-      const outrosSocios: ContatoExtra[] = (dados.socios ?? [])
-        .filter((s) => s.nome !== dados.contato)
-        .map((s) => ({ nome: s.nome, cargo: s.cargo }));
       const item: Empresa = {
         id: newId(),
         nome,
@@ -606,14 +620,20 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
         razaoSocial: dados.razaoSocial,
         cnpj: dados.cnpj,
         telefone: dados.telefone,
+        telefoneSecundario: dados.telefoneSecundario,
         email: dados.email,
+        emailSecundario: dados.emailSecundario,
         contato: dados.contato,
         cargo: dados.cargo,
+        contatosExtras: (dados.contatosExtras ?? []).map((c) => ({
+          id: newId(),
+          nome: c.nome,
+          cargo: c.cargo,
+        })),
         observacoes: dados.observacoes,
         uf: dados.uf,
         setor: dados.setor,
         regime: dados.regime,
-        contatosExtras: outrosSocios.length ? outrosSocios : undefined,
       };
 
       const digitos = cnpjDigitos(dados.cnpj);
@@ -636,8 +656,6 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 uf: e.uf || item.uf,
                 setor: e.setor || item.setor,
                 regime: e.regime || item.regime,
-                contatosExtras:
-                  e.contatosExtras && e.contatosExtras.length ? e.contatosExtras : item.contatosExtras,
               }
             : e,
         );
@@ -676,8 +694,13 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   }
 
 
+  /** Exclui uma empresa da lista — pede confirmação, pois a ação não pode ser desfeita. */
   function removeEmpresa(id: string) {
+    const alvo = list.find((e) => e.id === id);
+    const nome = alvo?.nome || "esta empresa";
+    if (!window.confirm(`Excluir "${nome}"? Essa ação não pode ser desfeita.`)) return;
     persist(list.filter((e) => e.id !== id));
+    toast.success(`Excluída: ${nome}`);
   }
 
   function moveToDate(id: string, targetDate: string) {
@@ -729,6 +752,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
     if (bulkMode === "mover") {
       persist(list.filter((e) => !selecionados.includes(e.id)));
     }
+    // O destino pode ser uma pasta que não é a data/pasta ativa agora — o
+    // `list` do estado não reflete isso sozinho, então avisamos a contagem
+    // por pasta pra recalcular.
+    setPastaCountsVersion((v) => v + 1);
     setSelecionados([]);
     const dup = itens.length - clones.length;
     const destinoLabel = isPastaBucket(target)
@@ -741,14 +768,30 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   }
 
 
+  // Agrupa as empresas por raiz de CNPJ uma única vez por lista. Antes, cada
+  // linha renderizada rodava um filter() na lista inteira só pra descobrir se
+  // fazia parte de um grupo matriz/filiais — com listas grandes isso deixava
+  // a tela mais lenta. Agora é um Map calculado uma vez por mudança de lista.
+  const gruposPorRaizCnpj = useMemo(() => {
+    const map = new Map<string, Empresa[]>();
+    for (const e of list) {
+      const raiz = cnpjRaiz(e.cnpj);
+      if (!raiz) continue;
+      const arr = map.get(raiz);
+      if (arr) arr.push(e);
+      else map.set(raiz, [e]);
+    }
+    for (const arr of map.values()) {
+      if (arr.length > 1) arr.sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""));
+    }
+    return map;
+  }, [list]);
 
   function unidadesDoGrupo(item: Empresa): Empresa[] {
     const raiz = cnpjRaiz(item.cnpj);
     if (!raiz) return [item];
-    const irmas = list.filter((e) => cnpjRaiz(e.cnpj) === raiz);
-    return irmas.length > 1
-      ? [...irmas].sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""))
-      : [item];
+    const grupo = gruposPorRaizCnpj.get(raiz);
+    return grupo && grupo.length > 1 ? grupo : [item];
   }
 
   /** Antes de injetar no Pré, se a empresa tiver matriz + filiais, pergunta qual unidade usar. */
@@ -857,6 +900,24 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const filtrosAtivos = !!(
     filtroBusca.trim() || filtroStatus || filtroUf || filtroSetor || filtroRegime || filtroEtapa
   );
+
+  /**
+   * Contagem de empresas ativas por pasta, usada na barra lateral.
+   * Antes, cada RENDER (inclusive digitar na busca) relia e reprocessava o
+   * localStorage de TODAS as pastas. Agora só recalcula quando algo que pode
+   * ter mudado essas contagens realmente muda: a lista de pastas, a lista da
+   * data/pasta ativa, ou uma ação em lote que mexeu em outra pasta
+   * (pastaCountsVersion).
+   */
+  const contagemPorPasta = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!hydrated) return map;
+    for (const p of pastas) {
+      map.set(p.id, load(`pasta:${p.id}`).filter((e) => e.status !== "sem_interesse").length);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, pastas, list, pastaCountsVersion]);
 
   /** Pontuação do ranking (mesma lógica do Painel Executivo) por empresa. */
   const scorePorChave = useMemo(() => {
@@ -1000,29 +1061,35 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
                 r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
                 r.endereco ? `Endereço: ${r.endereco}` : null,
-                r.socios ? `Sócios: ${r.socios}` : null,
+                r.socios && r.socios.length
+                  ? `Sócios: ${r.socios.map((s) => s.nome).join(", ")}`
+                  : null,
               ].filter((linha): linha is string => !!linha);
-              // Sócios que a BrasilAPI trouxe e que ainda não estão nem no
-              // Contato principal nem nos contatos extras — só entra se a
-              // empresa ainda não tiver nenhum contato extra cadastrado,
-              // pra nunca sobrepor edição manual sua.
-              const nomesExtras = (r.sociosLista ?? []).filter(
-                (nome) => nome.toLowerCase() !== (e.contato ?? "").toLowerCase(),
-              );
+              // Só preenche "Contatos adicionais" automaticamente se a
+              // empresa ainda não tiver nenhum — nunca sobrepõe edição manual.
+              // O sócio já usado em "Contato" (campo principal) não é
+              // repetido aqui.
+              const contatosDoQsa: ContatoExtra[] = (r.socios ?? [])
+                .filter(
+                  (s) =>
+                    s.nome.trim().toLowerCase() !== (e.contato ?? "").trim().toLowerCase(),
+                )
+                .map((s) => ({ id: newId(), nome: s.nome, cargo: s.qualificacao ?? undefined }));
               return {
                 ...e,
                 uf: e.uf || r.uf || undefined,
                 setor: e.setor || r.setor || undefined,
                 regime: e.regime || r.regime || undefined,
                 telefone: e.telefone || r.telefone || undefined,
+                telefoneSecundario: e.telefoneSecundario || r.telefoneSecundario || undefined,
                 email: e.email || r.email || undefined,
                 razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
                 observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
                 contatosExtras:
-                  e.contatosExtras && e.contatosExtras.length
+                  e.contatosExtras && e.contatosExtras.length > 0
                     ? e.contatosExtras
-                    : nomesExtras.length
-                      ? nomesExtras.map((nome) => ({ nome }))
+                    : contatosDoQsa.length
+                      ? contatosDoQsa
                       : e.contatosExtras,
               };
             });
@@ -1357,12 +1424,12 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
   const editDialog = (
     <EditEmpresaDialog
       empresa={editingEmpresa}
-      unidades={editingEmpresa ? unidadesDoGrupo(editingEmpresa) : []}
+      todasEmpresas={list}
       onClose={() => setEditingEmpresa(null)}
       onSave={saveEmpresaEdits}
       onRemove={(id) => { removeEmpresa(id); setEditingEmpresa(null); }}
       onSend={(item) => { setEditingEmpresa(null); enviarParaPre(item); }}
-      onSwitch={(item) => setEditingEmpresa(item)}
+      onSwitchEmpresa={(item) => setEditingEmpresa(item)}
     />
   );
 
@@ -1567,64 +1634,69 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                 </span>
               </button>
 
-              {pastas.map((p) => {
-                const bucket = `pasta:${p.id}`;
-                const ativa = date === bucket;
-                const qtd = hydrated ? load(bucket).filter((e) => e.status !== "sem_interesse").length : 0;
-                return (
-                  <div
-                    key={p.id}
-                    className={
-                      "group relative rounded-xl border-2 transition " +
-                      (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
-                    }
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setDate(bucket)}
-                      title="Trabalhar esta pasta"
-                      className="flex w-full items-center gap-2.5 px-3 py-2.5 pr-12 text-left"
-                    >
-                      <span
+              <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorderPastas}>
+                <SortableContext items={pastas.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                  {pastas.map((p) => {
+                    const bucket = `pasta:${p.id}`;
+                    const ativa = date === bucket;
+                    const qtd = contagemPorPasta.get(p.id) ?? 0;
+                    return (
+                      <SortablePastaRow
+                        key={p.id}
+                        id={p.id}
                         className={
-                          "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
-                          (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                          "group relative flex items-center rounded-xl border-2 transition " +
+                          (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
                         }
                       >
-                        {qtd}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={
-                            "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
-                          }
+                        <button
+                          type="button"
+                          onClick={() => setDate(bucket)}
+                          title="Trabalhar esta pasta"
+                          className="flex min-w-0 flex-1 items-center gap-2.5 py-2.5 pl-1 pr-12 text-left"
                         >
-                          {p.nome}
-                        </span>
-                        <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
-                      </span>
-                    </button>
-                    <div className="absolute right-1.5 top-1.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
-                        className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                        title="Renomear pasta"
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => excluirPasta(p.id)}
-                        className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
-                        title="Excluir pasta"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                          <span
+                            className={
+                              "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
+                              (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                            }
+                          >
+                            {qtd}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={
+                                "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
+                              }
+                            >
+                              {p.nome}
+                            </span>
+                            <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
+                          </span>
+                        </button>
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
+                            className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                            title="Renomear pasta"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => excluirPasta(p.id)}
+                            className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                            title="Excluir pasta"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </SortablePastaRow>
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
 
               <button
                 type="button"
@@ -1868,7 +1940,12 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                             key={e.id}
                             id={e.id}
                             className={
-                              "group flex items-start gap-2 rounded-2xl border px-4 py-3.5 transition " +
+                              "group flex flex-wrap items-center gap-3 rounded-2xl border border-l-4 px-4 py-3.5 transition " +
+                              (recusado
+                                ? "border-l-rose-400 "
+                                : done
+                                  ? "border-l-emerald-400 "
+                                  : "border-l-amber-400 ") +
                               (recusado
                                 ? "border-rose-400/20 bg-rose-400/5"
                                 : done
@@ -1878,172 +1955,155 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
                                     : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
                             }
                           >
-                            <div className="flex min-w-0 flex-1 flex-col gap-2">
-                            {/* Linha 1 — identidade + status */}
-                            <div className="flex items-center gap-3">
-                              <input
-                                type="checkbox"
-                                checked={selecionado}
-                                onChange={() => toggleSelecionado(e.id)}
-                                className="h-4 w-4 shrink-0 accent-[#e8c15a]"
-                                title="Selecionar para mover em lote"
-                              />
+                            <input
+                              type="checkbox"
+                              checked={selecionado}
+                              onChange={() => toggleSelecionado(e.id)}
+                              className="h-4 w-4 shrink-0 accent-[#e8c15a]"
+                              title="Selecionar para mover em lote"
+                            />
+                            <div className="min-w-0 flex-1">
                               <button
                                 type="button"
                                 onClick={() => setEditingEmpresa(e)}
                                 className={
-                                  "min-w-0 flex-1 truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
+                                  "block max-w-full truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
                                   (recusado ? "text-rose-300" : done ? "text-emerald-300" : "text-hub-text")
                                 }
                                 title="Abrir e editar dados"
                               >
                                 {e.nome}
                               </button>
-                              {recusado ? (
-                                <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
-                                  <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
-                                  Sem interesse
-                                </span>
-                              ) : done ? (
-                                <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
-                                  <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                                  Realizada
-                                </span>
-                              ) : (
-                                <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
-                                  <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
-                                  Pendente
-                                </span>
-                              )}
+                              <p className="mt-0.5 truncate font-mono text-[11px] tracking-tight text-hub-muted">
+                                {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
+                                {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
+                              </p>
                             </div>
-
-                            {/* Linha 2 — meta (CNPJ, UF, contato, grupo, indicadores) + ações */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 pl-7">
-                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                                <span className="truncate font-mono text-[11px] tracking-tight text-hub-muted">
-                                  {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
-                                  {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
-                                </span>
-                                {unidades.length > 1 && (
-                                  <span
-                                    className="shrink-0 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
-                                    title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
-                                  >
-                                    Grupo · {unidades.length}
-                                  </span>
-                                )}
-                                {e.uf && (
-                                  <span
-                                    className="shrink-0 rounded-lg bg-hub-raised px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-hub-muted"
-                                    title={[e.uf, e.setor, e.regime].filter(Boolean).join(" · ") || "UF"}
-                                  >
-                                    {e.uf}
-                                  </span>
-                                )}
-                                {(() => {
-                                  const cnpjOk = cnpjValido(e.cnpj);
-                                  const dadosOk = !!(e.uf && e.setor);
-                                  const sc = scoreDaEmpresa(e);
-                                  const ligacaoOk = typeof sc === "number";
-                                  return (
-                                    <span
-                                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hub-line/50 bg-hub-raised px-2 py-0.5"
-                                      title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
-                                    >
-                                      {cnpjOk ? (
-                                        <Check className="h-3 w-3 text-emerald-500" />
-                                      ) : (
-                                        <X className="h-3 w-3 text-hub-muted/50" />
-                                      )}
-                                      {dadosOk ? (
-                                        <Check className="h-3 w-3 text-emerald-500" />
-                                      ) : (
-                                        <X className="h-3 w-3 text-hub-muted/50" />
-                                      )}
-                                      {ligacaoOk ? (
-                                        <Check className="h-3 w-3 text-emerald-500" />
-                                      ) : (
-                                        <X className="h-3 w-3 text-hub-muted/50" />
-                                      )}
-                                      {ligacaoOk && (
-                                        <span className="ml-0.5 rounded-full bg-hub-gold/10 px-1.5 py-0.5 text-[10px] font-bold text-hub-gold">
-                                          {sc}
-                                        </span>
-                                      )}
+                            {unidades.length > 1 && (
+                              <span
+                                className="shrink-0 rounded-full bg-hub-gold/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
+                                title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
+                              >
+                                Grupo · {unidades.length}
+                              </span>
+                            )}
+                            {(() => {
+                              const cnpjOk = cnpjValido(e.cnpj);
+                              const dadosOk = !!(e.uf && e.setor);
+                              const sc = scoreDaEmpresa(e);
+                              const ligacaoOk = typeof sc === "number";
+                              return (
+                                <span
+                                  className="flex shrink-0 items-center gap-2 rounded-lg border border-hub-line/50 bg-hub-raised px-2.5 py-1"
+                                  title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
+                                >
+                                  {cnpjOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {dadosOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {ligacaoOk ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-500" />
+                                  ) : (
+                                    <X className="h-3.5 w-3.5 text-hub-muted/50" />
+                                  )}
+                                  {ligacaoOk && (
+                                    <span className="ml-1 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[11px] font-bold text-hub-gold">
+                                      {sc}
                                     </span>
-                                  );
-                                })()}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1.5">
-                                <Button
-                                  size="sm"
-                                  onClick={() => enviarParaPre(e)}
-                                  className={
-                                    "h-8 gap-1 rounded-lg text-[11px] font-bold " +
-                                    (recusado
-                                      ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
-                                      : done
-                                        ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
-                                        : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
-                                  }
-                                  title={
-                                    recusado
-                                      ? "Sem interesse — reabordagem futura"
-                                      : done
-                                        ? "Já ligada hoje — clique para ligar novamente"
-                                        : "Enviar ao Pré-ligação"
-                                  }
-                                >
-                                  {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
-                                  {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
-                                  {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setEditingEmpresa(e)}
-                                  className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                                  title="Editar"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Popover>
-                                  <PopoverTrigger asChild>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
-                                      title="Mais ações"
-                                    >
-                                      <MoreVertical className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </PopoverTrigger>
-                                  <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
-                                    <div className="space-y-2">
-                                      <div>
-                                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
-                                          Mover para outro dia
-                                        </div>
-                                        <Input
-                                          type="date"
-                                          defaultValue={date}
-                                          onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
-                                          className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
-                                        />
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => removeEmpresa(e.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] font-medium text-rose-300 hover:bg-rose-500/10"
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        Excluir empresa
-                                      </button>
-                                    </div>
-                                  </PopoverContent>
-                                </Popover>
-                              </div>
-                            </div>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                            {e.uf && (
+                              <span
+                                className="shrink-0 rounded-lg bg-hub-raised px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-hub-muted"
+                                title={[e.uf, e.setor, e.regime].filter(Boolean).join(" · ") || "UF"}
+                              >
+                                {e.uf}
+                              </span>
+                            )}
+                            {recusado ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
+                                Sem interesse
+                              </span>
+                            ) : done ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                Realizada
+                              </span>
+                            ) : (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                Pendente
+                              </span>
+                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                onClick={() => enviarParaPre(e)}
+                                className={
+                                  "h-8 gap-1 rounded-lg text-[11px] font-bold " +
+                                  (recusado
+                                    ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                    : done
+                                      ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                      : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
+                                }
+                                title={
+                                  recusado
+                                    ? "Sem interesse — reabordagem futura"
+                                    : done
+                                      ? "Já ligada hoje — clique para ligar novamente"
+                                      : "Enviar ao Pré-ligação"
+                                }
+                              >
+                                {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                                {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
+                                {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingEmpresa(e)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                                title="Editar"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button size="sm" variant="ghost" className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text" title="Mudar data">
+                                    <CalendarDays className="h-3.5 w-3.5" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
+                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
+                                    Mover para outro dia
+                                  </div>
+                                  <Input
+                                    type="date"
+                                    defaultValue={date}
+                                    onChange={(ev) => { const v = ev.target.value; if (v) moveToDate(e.id, v); }}
+                                    className="h-8 w-[150px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removeEmpresa(e.id)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                                title="Excluir"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
                             </div>
                           </SortableEmpresaRow>
                         );
@@ -2204,10 +2264,10 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
               <li
                 key={e.id}
                 className={
-                  "group flex items-center gap-1.5 rounded-md border px-2 py-1.5 transition " +
+                  "group flex items-center gap-1.5 rounded-md border border-l-4 px-2 py-1.5 transition " +
                   (done
-                    ? "border-emerald-500/40 bg-emerald-500/10"
-                    : "border-border/60 bg-white hover:border-navy-deep/40 hover:bg-primary/5")
+                    ? "border-l-emerald-500 border-emerald-500/40 bg-emerald-500/10"
+                    : "border-l-amber-400 border-border/60 bg-white hover:border-navy-deep/40 hover:bg-primary/5")
                 }
                 title={e.nome}
               >
@@ -2264,20 +2324,20 @@ export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact"
 
 function EditEmpresaDialog({
   empresa,
-  unidades = [],
+  todasEmpresas,
   onClose,
   onSave,
   onRemove,
   onSend,
-  onSwitch,
+  onSwitchEmpresa,
 }: {
   empresa: Empresa | null;
-  unidades?: Empresa[];
+  todasEmpresas: Empresa[];
   onClose: () => void;
   onSave: (patch: Empresa) => void;
   onRemove: (id: string) => void;
   onSend?: (item: Empresa) => void;
-  onSwitch?: (item: Empresa) => void;
+  onSwitchEmpresa?: (item: Empresa) => void;
 }) {
   const [nome, setNome] = useState("");
   const [razaoSocial, setRazaoSocial] = useState("");
@@ -2285,15 +2345,17 @@ function EditEmpresaDialog({
   const [contato, setContato] = useState("");
   const [cargo, setCargo] = useState("");
   const [telefone, setTelefone] = useState("");
+  const [telefoneSecundario, setTelefoneSecundario] = useState("");
   const [email, setEmail] = useState("");
+  const [emailSecundario, setEmailSecundario] = useState("");
   const [emailCheck, setEmailCheck] = useState<ResultadoVerificacaoEmail | null>(null);
   const [emailChecking, setEmailChecking] = useState(false);
+  const [contatosExtras, setContatosExtras] = useState<ContatoExtra[]>([]);
   const [observacoes, setObservacoes] = useState("");
   const [textoBruto, setTextoBruto] = useState("");
   const [uf, setUf] = useState("");
   const [setor, setSetor] = useState("");
   const [regime, setRegime] = useState("");
-  const [contatosExtras, setContatosExtras] = useState<ContatoExtra[]>([]);
 
   useEffect(() => {
     if (!empresa) return;
@@ -2305,24 +2367,21 @@ function EditEmpresaDialog({
     setContato(empresa.contato || auto.contato || "");
     setCargo(empresa.cargo || auto.cargo || "");
     setTelefone(empresa.telefone || auto.telefone || "");
+    setTelefoneSecundario(empresa.telefoneSecundario || auto.telefoneSecundario || "");
     setEmail(empresa.email || auto.email || "");
+    setEmailSecundario(empresa.emailSecundario || auto.emailSecundario || "");
     setEmailCheck(null);
     setEmailChecking(false);
+    setContatosExtras(
+      empresa.contatosExtras && empresa.contatosExtras.length > 0
+        ? empresa.contatosExtras
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
     setObservacoes(empresa.observacoes || auto.observacoes || "");
     setTextoBruto(empresa.textoBruto ?? "");
     setUf(empresa.uf || auto.uf || "");
     setSetor(empresa.setor || auto.setor || "");
     setRegime(empresa.regime || auto.regime || "");
-    // Contatos extras: usa os já salvos; se não houver, tenta puxar dos
-    // demais sócios encontrados no texto bruto (o primeiro já virou o
-    // Contato principal acima, então ele é excluído da lista extra).
-    const nomePrincipal = empresa.contato || auto.contato || "";
-    const autoExtras: ContatoExtra[] = (auto.socios ?? [])
-      .filter((s) => s.nome !== nomePrincipal)
-      .map((s) => ({ nome: s.nome, cargo: s.cargo }));
-    setContatosExtras(
-      empresa.contatosExtras && empresa.contatosExtras.length ? empresa.contatosExtras : autoExtras,
-    );
   }, [empresa]);
 
   // Ao colar/editar o texto bruto de uma empresa já existente, reprocessa e
@@ -2336,33 +2395,61 @@ function EditEmpresaDialog({
     setContato((atual) => atual || auto.contato || atual);
     setCargo((atual) => atual || auto.cargo || atual);
     setTelefone((atual) => atual || auto.telefone || atual);
+    setTelefoneSecundario((atual) => atual || auto.telefoneSecundario || atual);
     setEmail((atual) => atual || auto.email || atual);
+    setEmailSecundario((atual) => atual || auto.emailSecundario || atual);
     setObservacoes((atual) => atual || auto.observacoes || atual);
     setUf((atual) => atual || auto.uf || atual);
     setSetor((atual) => atual || auto.setor || atual);
     setRegime((atual) => atual || auto.regime || atual);
+    setContatosExtras((atual) =>
+      atual.length > 0
+        ? atual
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
   }
 
   function addContatoExtra() {
-    setContatosExtras((prev) => [...prev, { nome: "" }]);
+    setContatosExtras((prev) => [...prev, { id: newId(), nome: "", cargo: "", telefone: "", email: "" }]);
   }
 
-  function updateContatoExtra(index: number, patch: Partial<ContatoExtra>) {
-    setContatosExtras((prev) => prev.map((c, i) => (i === index ? { ...c, ...patch } : c)));
+  function updateContatoExtra(id: string, patch: Partial<ContatoExtra>) {
+    setContatosExtras((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   }
 
-  function removeContatoExtra(index: number) {
-    setContatosExtras((prev) => prev.filter((_, i) => i !== index));
+  function removeContatoExtra(id: string) {
+    setContatosExtras((prev) => prev.filter((c) => c.id !== id));
   }
 
   const open = empresa !== null;
 
+  // Unidades do mesmo grupo econômico (mesma raiz de CNPJ) — matriz e
+  // filiais. Só aparece o bloco quando há mais de uma unidade cadastrada.
+  const unidadesGrupo = useMemo(() => {
+    const raiz = cnpjRaiz(cnpj);
+    if (!raiz) return [];
+    const irmas = todasEmpresas.filter((e) => cnpjRaiz(e.cnpj) === raiz);
+    return irmas.length > 1
+      ? [...irmas].sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""))
+      : [];
+  }, [cnpj, todasEmpresas]);
+
+  const labelUnidadeAtual = unidadeLabel(cnpj);
+
   function buildPatch(): Empresa | null {
     if (!empresa) return null;
     const nomeFinal = nome.trim() || empresa.nome;
-    const extrasValidos = contatosExtras
-      .map((c) => ({ ...c, nome: c.nome.trim() }))
-      .filter((c) => c.nome);
+    const contatosLimpos: ContatoExtra[] = contatosExtras
+      .filter(
+        (c) => (c.nome ?? "").trim() || (c.telefone ?? "").trim() || (c.email ?? "").trim() || (c.cargo ?? "").trim(),
+      )
+      .map((c) => ({
+        id: c.id,
+        nome: c.nome?.trim() || undefined,
+        cargo: c.cargo?.trim() || undefined,
+        telefone: c.telefone?.trim() || undefined,
+        email: c.email?.trim() || undefined,
+      }));
     return {
       ...empresa,
       nome: nomeFinal,
@@ -2371,13 +2458,15 @@ function EditEmpresaDialog({
       contato: contato.trim() || undefined,
       cargo: cargo.trim() || undefined,
       telefone: telefone.trim() || undefined,
+      telefoneSecundario: telefoneSecundario.trim() || undefined,
       email: email.trim() || undefined,
+      emailSecundario: emailSecundario.trim() || undefined,
+      contatosExtras: contatosLimpos.length ? contatosLimpos : undefined,
       observacoes: observacoes.trim() || undefined,
       textoBruto,
       uf: uf.trim() || undefined,
       setor: setor.trim() || undefined,
       regime: regime.trim() || undefined,
-      contatosExtras: extrasValidos.length ? extrasValidos : undefined,
     };
   }
 
@@ -2393,41 +2482,30 @@ function EditEmpresaDialog({
     onSend?.(patch);
   }
 
+  /** Salva as edições atuais antes de trocar a tela para outra unidade do grupo. */
+  function trocarParaUnidade(unidade: Empresa) {
+    const patch = buildPatch();
+    if (patch) onSave(patch);
+    onSwitchEmpresa?.(unidade);
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Editar empresa</DialogTitle>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            Editar empresa
+            {labelUnidadeAtual && (
+              <span className="rounded-full bg-navy-deep/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-navy-deep">
+                {labelUnidadeAtual}
+              </span>
+            )}
+          </DialogTitle>
           <DialogDescription>
             Ajuste os dados e envie direto ao Pré-ligação quando estiver pronto.
           </DialogDescription>
         </DialogHeader>
         <div className="mt-2 space-y-3">
-          {empresa?.cnpj && (
-            <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-navy-deep">
-                🏢 {unidadeLabel(empresa.cnpj) ?? "Unidade"}
-                {unidades.length > 1 ? ` · grupo com ${unidades.length} unidades` : ""}
-              </p>
-              {unidades.length > 1 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {unidades
-                    .filter((u) => u.id !== empresa.id)
-                    .map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => onSwitch?.(u)}
-                        className="rounded-full border border-border/70 bg-white px-2.5 py-1 text-[10px] font-medium text-navy-deep transition hover:border-primary/50 hover:bg-primary/5"
-                        title="Abrir esta unidade do mesmo grupo econômico"
-                      >
-                        {unidadeLabel(u.cnpj) ?? "Unidade"} — {u.nome}
-                      </button>
-                    ))}
-                </div>
-              )}
-            </div>
-          )}
           <Field label="Nome (exibido no card)" value={nome} onChange={setNome} />
           <Field label="Razão Social" value={razaoSocial} onChange={setRazaoSocial} />
           <div className="grid grid-cols-2 gap-3">
@@ -2435,77 +2513,12 @@ function EditEmpresaDialog({
             <Field label="Telefone" value={telefone} onChange={setTelefone} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Contato" value={contato} onChange={setContato} />
-            <Field label="Cargo" value={cargo} onChange={setCargo} />
+            <Field label="Telefone secundário" value={telefoneSecundario} onChange={setTelefoneSecundario} />
+            <Field label="E-mail secundário" value={emailSecundario} onChange={setEmailSecundario} type="email" />
           </div>
-          <div className="space-y-2 rounded-lg border border-dashed border-border/70 p-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-[11px]">Outros contatos / sócios</Label>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-[11px]"
-                onClick={addContatoExtra}
-              >
-                <Plus className="mr-1 h-3 w-3" />
-                Adicionar
-              </Button>
-            </div>
-            {contatosExtras.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">
-                Nenhum contato adicional. Use quando a empresa tiver mais de um sócio ou decisor.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {contatosExtras.map((c, i) => (
-                  <div key={i} className="grid grid-cols-2 gap-1.5 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-                    <div className="grid gap-1">
-                      <Label className="text-[10px] text-muted-foreground">Nome</Label>
-                      <Input
-                        value={c.nome}
-                        onChange={(e) => updateContatoExtra(i, { nome: e.target.value })}
-                        className="h-8 text-[11px]"
-                      />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label className="text-[10px] text-muted-foreground">Cargo</Label>
-                      <Input
-                        value={c.cargo ?? ""}
-                        onChange={(e) => updateContatoExtra(i, { cargo: e.target.value })}
-                        className="h-8 text-[11px]"
-                      />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label className="text-[10px] text-muted-foreground">Telefone</Label>
-                      <Input
-                        value={c.telefone ?? ""}
-                        onChange={(e) => updateContatoExtra(i, { telefone: e.target.value })}
-                        className="h-8 text-[11px]"
-                      />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label className="text-[10px] text-muted-foreground">E-mail</Label>
-                      <Input
-                        value={c.email ?? ""}
-                        onChange={(e) => updateContatoExtra(i, { email: e.target.value })}
-                        className="h-8 text-[11px]"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 self-end p-0 text-red-600 hover:bg-red-50 hover:text-red-700"
-                      onClick={() => removeContatoExtra(i)}
-                      title="Remover este contato"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Contato principal" value={contato} onChange={setContato} />
+            <Field label="Cargo" value={cargo} onChange={setCargo} />
           </div>
           <div className="grid gap-1.5">
             <Label className="text-[11px]">E-mail</Label>
@@ -2543,6 +2556,126 @@ function EditEmpresaDialog({
               </p>
             )}
           </div>
+
+          {/* Contatos adicionais — outros sócios/pessoas de contato da mesma empresa */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Contatos adicionais {contatosExtras.length > 0 && `(${contatosExtras.length})`}
+              </Label>
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-[11px]" onClick={addContatoExtra}>
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar contato
+              </Button>
+            </div>
+            {contatosExtras.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Nenhum contato adicional. Use "Adicionar contato" se houver mais de um sócio ou pessoa de contato.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {contatosExtras.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-border/50 bg-card p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Contato adicional
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                        onClick={() => removeContatoExtra(c.id)}
+                        title="Remover este contato"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        value={c.nome ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { nome: ev.target.value })}
+                        placeholder="Nome"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.cargo ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { cargo: ev.target.value })}
+                        placeholder="Cargo"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.telefone ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { telefone: ev.target.value })}
+                        placeholder="Telefone"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.email ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { email: ev.target.value })}
+                        placeholder="E-mail"
+                        type="email"
+                        className="h-8 text-[12px]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Grupo econômico — matriz/filiais do mesmo CNPJ raiz, com atalho clicável */}
+          {unidadesGrupo.length > 0 && (
+            <div className="rounded-xl border border-navy-deep/20 bg-navy-deep/5 p-3">
+              <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-navy-deep">
+                Grupo econômico — {unidadesGrupo.length} unidades
+              </Label>
+              <ul className="space-y-1.5">
+                {unidadesGrupo.map((u) => {
+                  const ehAtual = u.id === empresa?.id;
+                  const detalhes = [unidadeLabel(u.cnpj), cidadeUfDoTexto(u.textoBruto), u.telefone]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        disabled={ehAtual}
+                        onClick={() => trocarParaUnidade(u)}
+                        className={
+                          "w-full rounded-lg border px-2.5 py-1.5 text-left transition " +
+                          (ehAtual
+                            ? "cursor-default border-navy-deep/40 bg-navy-deep/10"
+                            : "border-border/50 bg-card hover:border-navy-deep/40 hover:bg-primary/5")
+                        }
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[12px] font-semibold text-navy-deep">{u.nome}</span>
+                          {unidadeLabel(u.cnpj) && (
+                            <span className="rounded-full bg-navy-deep/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-navy-deep">
+                              {unidadeLabel(u.cnpj)}
+                            </span>
+                          )}
+                          {ehAtual && (
+                            <span className="rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                              editando agora
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {detalhes || "Sem dados adicionais"}
+                        </p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                Clique em outra unidade para abrir a edição dela (suas alterações aqui são salvas antes de trocar).
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
               <Label className="text-[11px]">UF</Label>
@@ -2684,5 +2817,39 @@ function SortableEmpresaRow({
       </button>
       {children}
     </li>
+  );
+}
+
+/** Linha arrastável da lista de Pastas na barra lateral — mesmo padrão do menu "PROSPECTAR". */
+function SortablePastaRow({
+  id,
+  className,
+  children,
+}: {
+  id: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={className + (isDragging ? " opacity-60" : "")}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab touch-none rounded p-1 pl-2 text-hub-muted hover:text-hub-text active:cursor-grabbing"
+        title="Arraste para reordenar"
+        aria-label="Reordenar pasta"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      {children}
+    </div>
   );
 }
