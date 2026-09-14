@@ -864,19 +864,25 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           </span>
         </div>
 
+        {!cnpj.trim() && !dados.trim() && !nomeBusca.trim() && (
+          <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            Cole um CNPJ ou o nome da empresa logo abaixo para começar.
+          </p>
+        )}
+
         <div className="space-y-2">
-          <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
+          <div className="inline-flex w-full rounded-lg border border-input bg-muted/40 p-1 text-xs">
             <button
               type="button"
               onClick={() => setSearchMode("cnpj")}
-              className={`flex-1 rounded px-2 py-1 transition ${searchMode === "cnpj" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "cnpj" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
             >
               CNPJ
             </button>
             <button
               type="button"
               onClick={() => setSearchMode("nome")}
-              className={`flex-1 rounded px-2 py-1 transition ${searchMode === "nome" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "nome" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
             >
               Razão social
             </button>
@@ -1134,15 +1140,24 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
         <div ref={dadosSectionRef}>
 
+          {contingenciaAtiva && (
+            <div className="mb-2 flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 dark:border-amber-900 dark:bg-amber-950/40">
+              <span className="mt-0.5 shrink-0 text-base leading-none">⚠️</span>
+              <div>
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+                  Modo Manual de Contingência ativo
+                </p>
+                <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                  As bases públicas (BrasilAPI/CNPJá) estão instáveis. A busca automática foi desativada — cole os dados da empresa manualmente no campo abaixo.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between gap-2">
             <Label htmlFor="dados" className="text-xs">
               Dados da empresa
             </Label>
-            {contingenciaAtiva && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
-                Modo Manual de Contingência
-              </span>
-            )}
           </div>
           <Textarea
             id="dados"
@@ -1235,9 +1250,18 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   <Download className="mr-1 h-3 w-3" />
                   Baixar
                 </Button>
-                <Button size="sm" variant="ghost" onClick={copyScript}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={copyScript}
+                  title="Atalho: Alt+S"
+                  className="gap-1"
+                >
                   <Copy className="mr-1 h-3 w-3" />
                   Copiar
+                  <kbd className="ml-1 rounded border border-border bg-muted px-1 py-0.5 text-[9px] font-semibold leading-none text-muted-foreground">
+                    Alt+S
+                  </kbd>
                 </Button>
                 <CallRecorderButton
                   empresa={currentLeadState?.razaoSocial ?? empresaResumo ?? null}
