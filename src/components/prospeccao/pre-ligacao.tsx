@@ -117,6 +117,8 @@ import {
   CircleDollarSign,
   CheckCircle2,
   LogOut,
+  MessageCircle,
+  ArrowRight,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -192,15 +194,23 @@ const aiCache = new Map<string, string>();
 // o script sem alterar os dados da empresa).
 const contactNameCache = new Map<string, string>();
 
-/** Um card do fluxo de "Contornar objeções" na Pré-ligação. */
+/** Um card/nó do fluxo de "Condução da ligação" na Pré-ligação.
+ * O fluxo é modelado como um mapa de conversa (não uma árvore sim/não):
+ * a partir de QUALQUER nó o operador pode seguir pra QUALQUER outro nó,
+ * porque na vida real a pessoa do outro lado pode reagir de qualquer jeito. */
 type ObjecaoCard = {
   id: string;
   label: string;
   icon: LucideIcon;
   resposta: string;
+  /** "abertura" = nó inicial da ligação; "objecao" = contorno de objeção;
+   * "terminal" = desfecho da ligação (fechar ou encerrar). */
+  kind: "abertura" | "objecao" | "terminal";
   /** Nota extra que só aparece se o operador clicar num gatilho (ex: "insistiu"). */
   extra?: { gatilho: string; texto: string };
-  /** Botões de desvio para outro card, quando a resposta da pessoa aponta pra outra objeção. */
+  /** Botões de desvio sugeridos com prioridade, quando a resposta da pessoa
+   * claramente aponta pra outro nó específico (aparecem em destaque, antes
+   * do grid geral de "outros rumos possíveis"). */
   routing?: { label: string; targetId: string }[];
 };
 
@@ -245,11 +255,16 @@ export function PreLigacao({
   // Nome do contato ativo, usado pra personalizar {NOME} nas respostas dos
   // cards — atualizado toda vez que a IA extrai o nome ao gerar/compilar o script.
   const [nomeAtivo, setNomeAtivo] = useState<string>("");
-  // Quais cards (objeções ou terminais) estão abertos agora — pode ter mais de um.
-  const [objecoesAbertas, setObjecoesAbertas] = useState<Set<string>>(new Set());
+  // Nó ATUALMENTE ativo do fluxo da ligação (só um por vez — reflete "em que
+  // ponto da conversa eu estou agora"). null = fluxo ainda não iniciado.
+  const [activeStep, setActiveStep] = useState<string | null>(null);
   // Quais notas "extra" (ex: "insistiu que só o diretor decide") já foram reveladas.
   const [extrasRevelados, setExtrasRevelados] = useState<Set<string>>(new Set());
-  // Trilha de cliques desta ligação, na ordem — mostra o caminho da conversa.
+  // Trilha da conversa, na ordem em que os nós foram visitados — desenha a
+  // "linha da vida" da ligação (estilo diagrama de sequência: abertura →
+  // objeção → objeção → desfecho). Voltar pra um nó já visitado PODA o trecho
+  // seguinte da trilha, porque a partir dali a conversa pode seguir por outro
+  // caminho.
   const [historicoObjecoes, setHistoricoObjecoes] = useState<string[]>([]);
   // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
   // sem bloquear o operador durante a ligação (Graceful Degradation).
@@ -291,7 +306,7 @@ export function PreLigacao({
       setContingenciaAtiva(false);
       dadosDirtyRef.current = false;
       setNomeAtivo("");
-      setObjecoesAbertas(new Set());
+      setActiveStep(null);
       setExtrasRevelados(new Set());
       setHistoricoObjecoes([]);
 
@@ -330,6 +345,8 @@ export function PreLigacao({
         };
         setActiveLead(lead);
         setCurrentLeadState(lead);
+        setActiveStep("abertura");
+        setHistoricoObjecoes(["abertura"]);
         const extras = [telefone, email].filter(Boolean).join(" · ");
         setEmpresaResumo(extras ? `${nomePrincipal} · ${extras}` : nomePrincipal);
       } else if (texto) {
@@ -395,7 +412,7 @@ export function PreLigacao({
     clearRascunho();
     setActiveLead(null);
     setNomeAtivo("");
-    setObjecoesAbertas(new Set());
+    setActiveStep(null);
     setExtrasRevelados(new Set());
     setHistoricoObjecoes([]);
     toast.success("Tudo limpo. Pronto para uma nova prospecção.");
@@ -649,6 +666,10 @@ export function PreLigacao({
       const lead = { ...leadBase, contatoNome: nomeContatoIA };
       setCurrentLeadState(lead);
       setActiveLead(lead);
+      // Se o fluxo da ligação ainda não começou, inicia no nó "Abertura".
+      // Usa updater funcional pra não depender do valor "preso" no closure.
+      setActiveStep((prev) => prev ?? "abertura");
+      setHistoricoObjecoes((prev) => (prev.length ? prev : ["abertura"]));
       const hydratedPromptText = preencherTagsDoScript(promptText, lead, dados.trim(), nomeContatoIA);
       const diaSemana = new Date().toLocaleDateString("pt-BR", { weekday: "long" });
       const valoresValidados = inferirSegmentoPorCnae(`${lead.cnaePrincipal ?? ""}\n${dados.trim()}`);
@@ -788,6 +809,8 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         const leadComContato = { ...lead, contatoNome: nomeContatoIA };
         setCurrentLeadState(leadComContato);
         setActiveLead(leadComContato);
+        setActiveStep((prev) => prev ?? "abertura");
+        setHistoricoObjecoes((prev) => (prev.length ? prev : ["abertura"]));
         const compiled = compileScriptLocally(promptText, leadComContato, dados.trim(), nomeContatoIA);
         setScript(compiled);
         void autoIniciarGravacao();
@@ -866,35 +889,43 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     return () => window.removeEventListener(ACTIVE_LEAD_EVENT, onLead);
   }, [cnpj]);
 
-  // ---- Fluxo de cards de "Contornar objeções" ----
+  // ---- Fluxo da ligação (Abertura → Objeções → Desfecho) ----
+  // Modelado como um mapa de conversa: a ligação é a "linha da vida" (como no
+  // diagrama de sequência), e de QUALQUER nó dá pra seguir pra QUALQUER outro,
+  // porque a pessoa do outro lado pode reagir de um jeito totalmente diferente
+  // do esperado a qualquer momento.
   const nomeParaObjecoes = nomeAtivo || "tudo bem?";
   const segmentoInfo = useMemo(
     () => inferirSegmentoPorCnae(`${currentLeadState?.cnaePrincipal ?? ""}\n${dados}`),
     [currentLeadState, dados],
   );
+  // {CIDADE_ESTADO} da Abertura Principal — mesma regra usada na geração do
+  // script completo (handleGenerate): "Cidade/UF" quando os dois existem,
+  // senão só a cidade, senão "aí na região".
+  const cidadeEstadoAtiva = useMemo(() => {
+    const cidade = currentLeadState?.cidade?.trim() || "";
+    const uf = currentLeadState?.uf?.trim() || "";
+    if (cidade && uf) return `${cidade}/${uf}`;
+    return cidade || "aí na região";
+  }, [currentLeadState]);
 
-  function abrirObjecao(id: string) {
-    setObjecoesAbertas((prev) => {
-      const next = new Set(prev);
-      next.add(id);
-      return next;
+  /** Navega o fluxo até o nó `id`. Se `id` já estiver na trilha (o operador
+   * está voltando pra um ponto anterior da conversa), poda tudo que vinha
+   * depois dele — daqui pra frente a conversa pode seguir por outro caminho. */
+  function irParaStep(id: string) {
+    setActiveStep(id);
+    setHistoricoObjecoes((prev) => {
+      const idx = prev.indexOf(id);
+      if (idx !== -1) return prev.slice(0, idx + 1);
+      return [...prev, id];
     });
-    setHistoricoObjecoes((prev) => (prev[prev.length - 1] === id ? prev : [...prev, id]));
-  }
-
-  function fecharObjecao(id: string) {
-    setObjecoesAbertas((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }
-
-  function irParaObjecao(id: string) {
-    abrirObjecao(id);
     setTimeout(() => {
       document.getElementById(`objecao-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 60);
+  }
+
+  function fecharStep() {
+    setActiveStep(null);
   }
 
   function toggleExtra(id: string) {
@@ -906,34 +937,54 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     });
   }
 
+  // Remove linhas de "direção de cena" (entre colchetes, ex: "[pausa de 1
+  // segundo...]") antes de copiar — são um lembrete pro operador, não parte
+  // do texto a ser colado/enviado.
   async function copyObjecaoResposta(texto: string) {
-    await navigator.clipboard.writeText(texto);
+    const limpo = texto
+      .split("\n")
+      .filter((linha) => !/^\s*\[.*\]\s*$/.test(linha))
+      .join("\n")
+      .trim();
+    await navigator.clipboard.writeText(limpo);
     toast.success("Resposta copiada");
   }
+
+  const abertura: ObjecaoCard = {
+    id: "abertura",
+    label: "Abertura principal",
+    icon: MessageCircle,
+    kind: "abertura",
+    resposta: `Oi, ${nomeParaObjecoes}, tudo bem? Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
+  };
 
   const objecoes: ObjecaoCard[] = [
     {
       id: "contador",
       label: "Já tem contador/fiscal",
       icon: Users,
+      kind: "objecao",
       resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
     },
     {
       id: "email",
       label: "Manda por e-mail",
       icon: Mail,
+      kind: "objecao",
       resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
     },
     {
       id: "sem-tempo",
       label: "Sem tempo agora",
       icon: Clock,
+      kind: "objecao",
       resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
     },
     {
       id: "nao-decide",
       label: "Não decide sozinho",
       icon: HelpCircle,
+      kind: "objecao",
       resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
       extra: {
         gatilho: "Insistiu que só o diretor decide",
@@ -944,6 +995,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       id: "sem-interesse",
       label: "Não tem interesse",
       icon: ThumbsDown,
+      kind: "objecao",
       resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
       routing: [
         { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
@@ -954,12 +1006,14 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       id: "liga-depois",
       label: "Pede pra ligar depois",
       icon: PhoneCall,
+      kind: "objecao",
       resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
     },
     {
       id: "quanto-custa",
       label: "Pergunta quanto custa",
       icon: CircleDollarSign,
+      kind: "objecao",
       resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
     },
   ];
@@ -969,20 +1023,30 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       id: "fechamento",
       label: "Fechou! Confirmar horário",
       icon: CheckCircle2,
+      kind: "terminal",
       resposta: `Perfeito, ${nomeParaObjecoes}! Então fico de te chamar amanhã pra essa conversa de 10 minutinhos, combinado? Te mando um lembrete antes. Muito obrigado pelo seu tempo!`,
     },
     {
       id: "encerrar",
       label: "Não quis, encerrar com respeito",
       icon: LogOut,
+      kind: "terminal",
       resposta: `Tudo bem, ${nomeParaObjecoes}, entendo completamente. Fico à disposição se mudar de ideia. Muito obrigado pelo seu tempo, tenha um ótimo dia!`,
     },
   ];
 
-  const todosOsCardsObjecao = [...objecoes, ...terminais];
+  const todosOsCardsObjecao = [abertura, ...objecoes, ...terminais];
   function labelDoCardObjecao(id: string) {
     return todosOsCardsObjecao.find((c) => c.id === id)?.label ?? id;
   }
+  function cardById(id: string) {
+    return todosOsCardsObjecao.find((c) => c.id === id) ?? null;
+  }
+  const cardAtivo = activeStep ? cardById(activeStep) : null;
+  // Todos os outros nós que dá pra seguir a partir de onde a conversa está
+  // agora — objeções (menos a atual) e a própria Abertura, pra reabrir a
+  // linha de abertura se a ligação "reiniciar" (ex: caiu e ligou de novo).
+  const outrosRumos = [abertura, ...objecoes].filter((c) => c.id !== activeStep);
 
   return (
 
@@ -1475,27 +1539,69 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                 4
               </span>
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Contornar objeções
+                Fluxo da ligação
               </span>
             </div>
 
-            {historicoObjecoes.length > 0 && (
-              <p className="mb-2 text-[11px] leading-snug text-muted-foreground">
-                Caminho desta ligação: {historicoObjecoes.map((id) => labelDoCardObjecao(id)).join(" → ")}
-              </p>
+            {!activeStep && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="mb-3 h-8 gap-1.5 text-xs"
+                onClick={() => irParaStep("abertura")}
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Iniciar pela Abertura
+              </Button>
             )}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {objecoes.map((obj) => {
+            {/* Linha da vida da ligação: cada nó visitado é uma etapa conectada,
+                estilo diagrama de sequência. Clicar num nó anterior volta pra
+                ele e poda o que vinha depois (a conversa pode divergir dali). */}
+            {historicoObjecoes.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-1">
+                {historicoObjecoes.map((id, idx) => {
+                  const c = cardById(id);
+                  if (!c) return null;
+                  const Icon = c.icon;
+                  const isCurrent = id === activeStep;
+                  return (
+                    <div key={`${id}-${idx}`} className="flex items-center gap-1">
+                      {idx > 0 && <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />}
+                      <button
+                        type="button"
+                        onClick={() => irParaStep(id)}
+                        className={`flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-all ${
+                          isCurrent
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                            : "border-border bg-muted/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                        }`}
+                      >
+                        <Icon className="h-3 w-3" />
+                        {c.label}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Acesso direto: pula pra qualquer nó do fluxo a qualquer momento —
+                a conversa real não segue uma ordem fixa. */}
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Ir direto para
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[abertura, ...objecoes].map((obj) => {
                 const Icon = obj.icon;
-                const aberto = objecoesAbertas.has(obj.id);
+                const isCurrent = obj.id === activeStep;
                 return (
                   <button
                     key={obj.id}
                     type="button"
-                    onClick={() => (aberto ? fecharObjecao(obj.id) : abrirObjecao(obj.id))}
+                    onClick={() => (isCurrent ? fecharStep() : irParaStep(obj.id))}
                     className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
-                      aberto
+                      isCurrent
                         ? "border-primary bg-primary/10 text-primary shadow-sm"
                         : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
                     }`}
@@ -1507,132 +1613,144 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               })}
             </div>
 
-            {objecoes
-              .filter((obj) => objecoesAbertas.has(obj.id))
-              .map((obj) => (
-                <div
-                  id={`objecao-${obj.id}`}
-                  key={obj.id}
-                  className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-3"
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-primary">{obj.label}</span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => copyObjecaoResposta(obj.resposta)}
-                      >
-                        <Copy className="mr-1 h-3 w-3" />
-                        Copiar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => fecharObjecao(obj.id)}
-                      >
-                        Fechar
-                      </Button>
-                    </div>
-                  </div>
-
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{obj.resposta}</p>
-
-                  {obj.extra && (
-                    <div className="mt-2">
-                      {!extrasRevelados.has(obj.id) ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-[11px]"
-                          onClick={() => toggleExtra(obj.id)}
-                        >
-                          {obj.extra.gatilho}
-                        </Button>
-                      ) : (
-                        <p className="mt-1 whitespace-pre-wrap rounded bg-background px-2 py-1.5 text-xs leading-relaxed">
-                          {obj.extra.texto}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {obj.routing && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {obj.routing.map((r) => (
-                        <Button
-                          key={r.targetId}
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-[11px]"
-                          onClick={() => irParaObjecao(r.targetId)}
-                        >
-                          {r.label}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+            {/* Nó ativo: só um por vez — representa "onde a conversa está agora". */}
+            {cardAtivo && (
+              <div
+                id={`objecao-${cardAtivo.id}`}
+                className={`mt-3 rounded-md border p-3 ${
+                  cardAtivo.kind === "terminal"
+                    ? "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40"
+                    : cardAtivo.kind === "abertura"
+                      ? "border-sky-300 bg-sky-50 dark:border-sky-900 dark:bg-sky-950/30"
+                      : "border-primary/30 bg-primary/5"
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span
+                    className={`text-xs font-semibold ${
+                      cardAtivo.kind === "terminal"
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : cardAtivo.kind === "abertura"
+                          ? "text-sky-700 dark:text-sky-300"
+                          : "text-primary"
+                    }`}
+                  >
+                    {cardAtivo.label}
+                  </span>
+                  <div className="flex items-center gap-1">
                     <Button
                       size="sm"
-                      variant="secondary"
-                      className="h-7 text-[11px]"
-                      onClick={() => irParaObjecao("fechamento")}
+                      variant="ghost"
+                      className="h-6 px-2 text-[11px]"
+                      onClick={() => copyObjecaoResposta(cardAtivo.resposta)}
                     >
-                      <CheckCircle2 className="mr-1 h-3 w-3" />
-                      Aceitou, fechar
+                      <Copy className="mr-1 h-3 w-3" />
+                      Copiar
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 text-[11px]"
-                      onClick={() => irParaObjecao("encerrar")}
+                      className="h-6 px-2 text-[11px]"
+                      onClick={fecharStep}
                     >
-                      <LogOut className="mr-1 h-3 w-3" />
-                      Não quis, encerrar
+                      Fechar
                     </Button>
                   </div>
                 </div>
-              ))}
 
-            {terminais
-              .filter((t) => objecoesAbertas.has(t.id))
-              .map((t) => (
-                <div
-                  id={`objecao-${t.id}`}
-                  key={t.id}
-                  className="mt-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/40"
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-                      {t.label}
-                    </span>
-                    <div className="flex items-center gap-1">
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {cardAtivo.resposta.split("\n").map((linha, i) =>
+                    /^\s*\[.*\]\s*$/.test(linha) ? (
+                      <p key={i} className="my-1 text-xs italic text-muted-foreground">
+                        {linha.replace(/^\s*\[|\]\s*$/g, "")}
+                      </p>
+                    ) : (
+                      <p key={i}>{linha}</p>
+                    ),
+                  )}
+                </div>
+
+                {cardAtivo.extra && (
+                  <div className="mt-2">
+                    {!extrasRevelados.has(cardAtivo.id) ? (
                       <Button
                         size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => copyObjecaoResposta(t.resposta)}
+                        variant="outline"
+                        className="h-7 text-[11px]"
+                        onClick={() => toggleExtra(cardAtivo.id)}
                       >
-                        <Copy className="mr-1 h-3 w-3" />
-                        Copiar
+                        {cardAtivo.extra.gatilho}
+                      </Button>
+                    ) : (
+                      <p className="mt-1 whitespace-pre-wrap rounded bg-background px-2 py-1.5 text-xs leading-relaxed">
+                        {cardAtivo.extra.texto}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {cardAtivo.routing && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {cardAtivo.routing.map((r) => (
+                      <Button
+                        key={r.targetId}
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-[11px]"
+                        onClick={() => irParaStep(r.targetId)}
+                      >
+                        {r.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+
+                {cardAtivo.kind !== "terminal" && (
+                  <div className="mt-3 border-t border-border/60 pt-2">
+                    <div className="mb-1.5 flex flex-wrap gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-[11px]"
+                        onClick={() => irParaStep("fechamento")}
+                      >
+                        <CheckCircle2 className="mr-1 h-3 w-3" />
+                        Aceitou, fechar
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => fecharObjecao(t.id)}
+                        className="h-7 text-[11px]"
+                        onClick={() => irParaStep("encerrar")}
                       >
-                        Fechar
+                        <LogOut className="mr-1 h-3 w-3" />
+                        Não quis, encerrar
                       </Button>
                     </div>
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Ou a conversa foi pra outro lado
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {outrosRumos.map((r) => {
+                        const Icon = r.icon;
+                        return (
+                          <Button
+                            key={r.id}
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px]"
+                            onClick={() => irParaStep(r.id)}
+                          >
+                            <Icon className="mr-1 h-3 w-3" />
+                            {r.label}
+                          </Button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{t.resposta}</p>
-                </div>
-              ))}
+                )}
+              </div>
+            )}
           </div>
         )}
       </CardContent>
