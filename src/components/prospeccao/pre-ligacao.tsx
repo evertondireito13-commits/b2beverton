@@ -1004,30 +1004,30 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           )}
 
           {(currentLeadState?.razaoSocial || empresaResumo) && (
-            <HistoricoEmpresaSheet
-              empresa={currentLeadState?.razaoSocial ?? empresaResumo ?? null}
-              cnpj={currentLeadState?.cnpj ?? cnpj ?? null}
-            />
-          )}
-
-
-          {empresaResumo && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleEnrichPhones}
-              disabled={loadingFones}
-              className="w-full border-border text-xs"
-              title="Consulta CNPJ.biz + site oficial via Firecrawl (consome créditos)"
-            >
-              {loadingFones ? (
-                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-              ) : (
-                <Search className="mr-2 h-3 w-3" />
+            <div className="flex flex-wrap items-center gap-2">
+              <HistoricoEmpresaSheet
+                empresa={currentLeadState?.razaoSocial ?? empresaResumo ?? null}
+                cnpj={currentLeadState?.cnpj ?? cnpj ?? null}
+              />
+              {empresaResumo && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleEnrichPhones}
+                  disabled={loadingFones}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  title="Consulta CNPJ.biz + site oficial via Firecrawl (consome créditos)"
+                >
+                  {loadingFones ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Search className="mr-2 h-3 w-3" />
+                  )}
+                  Buscar mais telefones
+                </Button>
               )}
-              Buscar mais telefones
-            </Button>
+            </div>
           )}
 
 
@@ -1184,6 +1184,15 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Gerar script
           </span>
+          {script.trim() && (
+            <Badge
+              variant="outline"
+              className="ml-auto gap-1 border-emerald-300 bg-emerald-50 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+            >
+              <Check className="h-3 w-3" />
+              Script pronto
+            </Badge>
+          )}
         </div>
 
         <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
