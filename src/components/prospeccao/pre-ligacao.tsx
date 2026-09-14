@@ -108,6 +108,16 @@ import {
   Trash2,
   Link2,
   History as HistoryIcon,
+  Users,
+  Mail,
+  Clock,
+  HelpCircle,
+  ThumbsDown,
+  PhoneCall,
+  CircleDollarSign,
+  CheckCircle2,
+  LogOut,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -182,75 +192,34 @@ const aiCache = new Map<string, string>();
 // o script sem alterar os dados da empresa).
 const contactNameCache = new Map<string, string>();
 
-// ---- Etapa 4: Cards de contorno de objeções ----
-// Estrutura simples: rótulo curto (o que aparece no botão) + resposta com
-// tags {NOME} / {SEGMENTO} / {INSUMOS} / {CIDADE_ESTADO}, preenchidas na hora
-// com os mesmos dados que já alimentam o script (sem gastar IA de novo).
-// Pra adicionar uma nova objeção, basta acrescentar um item aqui.
-type Objecao = {
+/** Um card do fluxo de "Contornar objeções" na Pré-ligação. */
+type ObjecaoCard = {
   id: string;
   label: string;
+  icon: LucideIcon;
   resposta: string;
+  /** Nota extra que só aparece se o operador clicar num gatilho (ex: "insistiu"). */
+  extra?: { gatilho: string; texto: string };
+  /** Botões de desvio para outro card, quando a resposta da pessoa aponta pra outra objeção. */
+  routing?: { label: string; targetId: string }[];
 };
 
-const OBJECOES: Objecao[] = [
-  {
-    id: "ja_tem_contador",
-    label: "Já tem contador/consultoria",
-    resposta:
-      "Entendo, {NOME}! Faz todo sentido, e a ideia não é substituir o que vocês já têm — é justamente somar. Muita empresa do segmento de {SEGMENTO} acaba descobrindo economia extra especificamente na parte de {INSUMOS}, que às vezes passa batido mesmo com um bom contador, porque é um ponto bem específico da operação. Numa conversa de uns 10 minutos eu já te mostro se faz sentido seguir ou não, sem custo e sem compromisso.",
-  },
-  {
-    id: "manda_email",
-    label: "Pede para mandar por e-mail",
-    resposta:
-      "Consigo sim, {NOME}! Só que o material sozinho, sem eu te explicar, normalmente não diz muita coisa, porque o ganho é bem específico pro caso de vocês aí em {CIDADE_ESTADO}. Que tal eu te mostrar rapidinho, uns 10 minutinhos, e depois já te mando tudo por e-mail com o resumo do que a gente viu?",
-  },
-  {
-    id: "sem_tempo",
-    label: "Sem tempo agora / corrido",
-    resposta:
-      "Sem problema nenhum, {NOME}, imagino a correria aí. Posso te ligar num momento melhor pra você — amanhã de manhã ou à tarde, por exemplo? É rapidinho, só pra ver se faz sentido pra vocês.",
-  },
-  {
-    id: "nao_decide",
-    label: "Não decide sozinho(a)",
-    resposta:
-      "Perfeito, {NOME}, faz todo sentido. Posso já incluir quem decide na conversa, ou te passar o material pra você levar internamente — o que for melhor pra você. O importante é conseguirmos mostrar rapidinho onde pode estar a economia em {SEGMENTO}.",
-  },
-  {
-    id: "sem_interesse",
-    label: "Não tem interesse",
-    resposta:
-      "Tudo bem, {NOME}, sem problema nenhum. Só pra eu entender melhor: é porque já resolveram esse ponto de {INSUMOS} de outra forma, ou é mais questão de timing agora? Se for timing, posso te procurar num momento melhor.",
-  },
-  {
-    id: "ligar_depois",
-    label: "Pede para ligar depois",
-    resposta:
-      "Combinado, {NOME}! Qual seria o melhor horário pra eu te ligar de novo — amanhã de manhã ou à tarde? Só pra eu já anotar aqui e não te pegar num momento ruim.",
-  },
-  {
-    id: "quanto_custa",
-    label: "Pergunta quanto custa",
-    resposta:
-      "Boa pergunta, {NOME}! Essa primeira conversa, de uns 10 minutos, é sem custo e sem compromisso — é justamente pra vermos juntos se existe economia real pra vocês antes de falar de qualquer valor. Faz sentido eu te mostrar rapidinho?",
-  },
-];
-
-/** Preenche as tags de uma resposta de objeção com os dados já disponíveis na tela. */
-function preencherTagsObjecao(
-  template: string,
-  nome: string,
-  segmento: string,
-  insumos: string,
-  cidadeEstado: string,
-) {
-  return template
-    .replace(/\{NOME\}/g, nome?.trim() || "tudo bem?")
-    .replace(/\{SEGMENTO\}/g, segmento?.trim() || "seu segmento")
-    .replace(/\{INSUMOS\}/g, insumos?.trim() || "os insumos usados na produção")
-    .replace(/\{CIDADE_ESTADO\}/g, cidadeEstado?.trim() || "aí na região");
+/** Exemplo de oportunidade encontrada, adaptado ao segmento do lead — usado na
+ * resposta da objeção "já tenho contador/fiscal". */
+function getExemploObjecao(segmento: string): string {
+  if (segmento.includes("Metalurgia")) {
+    return "Num caso parecido, encontramos oportunidade em eletrodos de solda e discos de corte que já tinham sido classificados como uso e consumo padrão.";
+  }
+  if (segmento.includes("Móveis") || segmento.includes("Madeira")) {
+    return "Num caso parecido, encontramos oportunidade em lixas industriais e colas estruturais que ninguém tinha reavaliado.";
+  }
+  if (segmento.includes("Alimentos") || segmento.includes("Refrigeração")) {
+    return "Num caso parecido, encontramos oportunidade em amônia de refrigeração e fluidos hidráulicos que passaram batido na primeira revisão.";
+  }
+  if (segmento.includes("Plástic")) {
+    return "Num caso parecido, encontramos oportunidade em resinas termoplásticas e moldes de injeção que já estavam classificados como consumo padrão.";
+  }
+  return "Num caso parecido, encontramos oportunidade em peças de reposição e óleos industriais que já estavam classificados como consumo padrão.";
 }
 
 export function PreLigacao({
@@ -272,15 +241,19 @@ export function PreLigacao({
   const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
   const [modoEsteira, setModoEsteira] = useState<boolean>(true);
   const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
+  // ---- Estado do fluxo de cards de "Contornar objeções" (Pré-ligação) ----
+  // Nome do contato ativo, usado pra personalizar {NOME} nas respostas dos
+  // cards — atualizado toda vez que a IA extrai o nome ao gerar/compilar o script.
+  const [nomeAtivo, setNomeAtivo] = useState<string>("");
+  // Quais cards (objeções ou terminais) estão abertos agora — pode ter mais de um.
+  const [objecoesAbertas, setObjecoesAbertas] = useState<Set<string>>(new Set());
+  // Quais notas "extra" (ex: "insistiu que só o diretor decide") já foram reveladas.
+  const [extrasRevelados, setExtrasRevelados] = useState<Set<string>>(new Set());
+  // Trilha de cliques desta ligação, na ordem — mostra o caminho da conversa.
+  const [historicoObjecoes, setHistoricoObjecoes] = useState<string[]>([]);
   // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
   // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
-  // Etapa 4 — Cards de contorno de objeções: quais estão expandidos no
-  // momento (pode ter mais de um aberto ao mesmo tempo) e o nome do contato
-  // já extraído por IA (o mesmo nome que aparece no script), reaproveitado
-  // aqui pra preencher as respostas sem gastar crédito de IA de novo.
-  const [objecoesAbertas, setObjecoesAbertas] = useState<Set<string>>(new Set());
-  const [nomeContatoExtraido, setNomeContatoExtraido] = useState<string>("tudo bem?");
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // Referência do bloco de script gerado — usada para rolar a tela até ele
   // assim que a compilação/geração termina (o operador pode estar com a tela
@@ -306,18 +279,21 @@ export function PreLigacao({
 
       // NOVA EMPRESA vinda do Preparação Noturna: limpa TUDO da empresa
       // anterior (CNPJ, dados colados, script compilado, resultados de
-      // busca, telefones, lead ativo, modo contingência, cards de objeção
-      // abertos e nome extraído) antes de aplicar os dados da nova empresa —
-      // evita ficar "dado em cima de dado" na tela. Também zera o "dirty
-      // flag": sem isso, se o operador tivesse editado manualmente os dados
-      // da empresa anterior, a proteção anti-sobrescrita impediria os dados
-      // da nova empresa de aparecerem.
+      // busca, telefones, lead ativo, modo contingência) antes de aplicar os
+      // dados da nova empresa — evita ficar "dado em cima de dado" na tela.
+      // Também zera o "dirty flag": sem isso, se o operador tivesse editado
+      // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
+      // impediria os dados da nova empresa de aparecerem.
       limparRascunhoPre();
       clearRascunho(); // garante que o rascunho da Pós-ligação também é limpo,
                         // mesmo que aquela aba não esteja montada agora
       setCurrentLeadState(null);
       setContingenciaAtiva(false);
       dadosDirtyRef.current = false;
+      setNomeAtivo("");
+      setObjecoesAbertas(new Set());
+      setExtrasRevelados(new Set());
+      setHistoricoObjecoes([]);
 
       if (detail.preparationId) {
         try { window.sessionStorage.setItem(ACTIVE_PREPARATION_ID_KEY, detail.preparationId); } catch { /* noop */ }
@@ -409,8 +385,6 @@ export function PreLigacao({
     setNomeBusca("");
     setResultados([]);
     setTelefones(null);
-    setObjecoesAbertas(new Set());
-    setNomeContatoExtraido("tudo bem?");
     updateRascunho({ pre: { cnpj: "", dados: "", script: "", empresaResumo: null, nomeBusca: "" } });
     updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
   }
@@ -420,6 +394,10 @@ export function PreLigacao({
     setCurrentLeadState(null);
     clearRascunho();
     setActiveLead(null);
+    setNomeAtivo("");
+    setObjecoesAbertas(new Set());
+    setExtrasRevelados(new Set());
+    setHistoricoObjecoes([]);
     toast.success("Tudo limpo. Pronto para uma nova prospecção.");
   }
 
@@ -667,7 +645,7 @@ export function PreLigacao({
       const parsedLead = parseLeadFromDados(dados, cnpj);
       const leadBase = parsedLead ?? currentLeadState ?? montarLeadFallback(dados, cnpj, empresaResumo);
       const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
-      setNomeContatoExtraido(nomeContatoIA);
+      setNomeAtivo(nomeContatoIA);
       const lead = { ...leadBase, contatoNome: nomeContatoIA };
       setCurrentLeadState(lead);
       setActiveLead(lead);
@@ -806,7 +784,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       setLoadingGen(true);
       try {
         const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
-        setNomeContatoExtraido(nomeContatoIA);
+        setNomeAtivo(nomeContatoIA);
         const leadComContato = { ...lead, contatoNome: nomeContatoIA };
         setCurrentLeadState(leadComContato);
         setActiveLead(leadComContato);
@@ -888,31 +866,122 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     return () => window.removeEventListener(ACTIVE_LEAD_EVENT, onLead);
   }, [cnpj]);
 
-  // Etapa 4 — valores usados pra preencher as respostas de objeção: o
-  // segmento/insumos vêm da mesma inferência por CNAE usada no script, e a
-  // cidade/estado vêm do lead carregado. Recalcula sozinho sempre que o lead
-  // ou os dados colados mudam — tudo local, sem gastar IA.
-  const valoresObjecao = useMemo(() => {
-    const cnaeTexto = `${currentLeadState?.cnaePrincipal ?? ""}\n${dados}`;
-    const inferido = inferirSegmentoPorCnae(cnaeTexto);
-    const cidadeEstado =
-      currentLeadState?.cidade && currentLeadState?.uf
-        ? `${currentLeadState.cidade}/${currentLeadState.uf}`
-        : "aí na região";
-    return {
-      segmento: inferido.segmento,
-      insumos: inferido.insumos,
-      cidadeEstado,
-    };
-  }, [currentLeadState, dados]);
+  // ---- Fluxo de cards de "Contornar objeções" ----
+  const nomeParaObjecoes = nomeAtivo || "tudo bem?";
+  const segmentoInfo = useMemo(
+    () => inferirSegmentoPorCnae(`${currentLeadState?.cnaePrincipal ?? ""}\n${dados}`),
+    [currentLeadState, dados],
+  );
 
-  function toggleObjecao(id: string) {
+  function abrirObjecao(id: string) {
     setObjecoesAbertas((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setHistoricoObjecoes((prev) => (prev[prev.length - 1] === id ? prev : [...prev, id]));
+  }
+
+  function fecharObjecao(id: string) {
+    setObjecoesAbertas((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function irParaObjecao(id: string) {
+    abrirObjecao(id);
+    setTimeout(() => {
+      document.getElementById(`objecao-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+  }
+
+  function toggleExtra(id: string) {
+    setExtrasRevelados((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  }
+
+  async function copyObjecaoResposta(texto: string) {
+    await navigator.clipboard.writeText(texto);
+    toast.success("Resposta copiada");
+  }
+
+  const objecoes: ObjecaoCard[] = [
+    {
+      id: "contador",
+      label: "Já tem contador/fiscal",
+      icon: Users,
+      resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
+    },
+    {
+      id: "email",
+      label: "Manda por e-mail",
+      icon: Mail,
+      resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
+    },
+    {
+      id: "sem-tempo",
+      label: "Sem tempo agora",
+      icon: Clock,
+      resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
+    },
+    {
+      id: "nao-decide",
+      label: "Não decide sozinho",
+      icon: HelpCircle,
+      resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
+      extra: {
+        gatilho: "Insistiu que só o diretor decide",
+        texto: "Sem problema, posso já agendar com você e o diretor junto, o que for melhor pra vocês.",
+      },
+    },
+    {
+      id: "sem-interesse",
+      label: "Não tem interesse",
+      icon: ThumbsDown,
+      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
+      routing: [
+        { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
+        { label: "Já revisamos →", targetId: "contador" },
+      ],
+    },
+    {
+      id: "liga-depois",
+      label: "Pede pra ligar depois",
+      icon: PhoneCall,
+      resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
+    },
+    {
+      id: "quanto-custa",
+      label: "Pergunta quanto custa",
+      icon: CircleDollarSign,
+      resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
+    },
+  ];
+
+  const terminais: ObjecaoCard[] = [
+    {
+      id: "fechamento",
+      label: "Fechou! Confirmar horário",
+      icon: CheckCircle2,
+      resposta: `Perfeito, ${nomeParaObjecoes}! Então fico de te chamar amanhã pra essa conversa de 10 minutinhos, combinado? Te mando um lembrete antes. Muito obrigado pelo seu tempo!`,
+    },
+    {
+      id: "encerrar",
+      label: "Não quis, encerrar com respeito",
+      icon: LogOut,
+      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo completamente. Fico à disposição se mudar de ideia. Muito obrigado pelo seu tempo, tenha um ótimo dia!`,
+    },
+  ];
+
+  const todosOsCardsObjecao = [...objecoes, ...terminais];
+  function labelDoCardObjecao(id: string) {
+    return todosOsCardsObjecao.find((c) => c.id === id)?.label ?? id;
   }
 
   return (
@@ -1399,75 +1468,61 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           </div>
         )}
 
-        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
-            4
-          </span>
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Contornar objeções
-          </span>
-          {objecoesAbertas.size > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="ml-auto h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={() => setObjecoesAbertas(new Set())}
-            >
-              Fechar todos
-            </Button>
-          )}
-        </div>
+        {(currentLeadState || dados.trim()) && (
+          <div className="border-t border-border/60 pt-3">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+                4
+              </span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Contornar objeções
+              </span>
+            </div>
 
-        <p className="text-[11px] text-muted-foreground">
-          Clique na objeção que a pessoa deu — a resposta pronta abre na hora, sem precisar rolar até o script.
-        </p>
+            {historicoObjecoes.length > 0 && (
+              <p className="mb-2 text-[11px] leading-snug text-muted-foreground">
+                Caminho desta ligação: {historicoObjecoes.map((id) => labelDoCardObjecao(id)).join(" → ")}
+              </p>
+            )}
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {OBJECOES.map((obj) => {
-            const aberto = objecoesAbertas.has(obj.id);
-            return (
-              <button
-                key={obj.id}
-                type="button"
-                onClick={() => toggleObjecao(obj.id)}
-                className={`rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
-                  aberto
-                    ? "border-primary bg-primary/10 text-primary ring-1 ring-primary/30"
-                    : "border-input bg-muted/30 text-foreground hover:border-primary/40 hover:bg-primary/5"
-                }`}
-              >
-                {obj.label}
-              </button>
-            );
-          })}
-        </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {objecoes.map((obj) => {
+                const Icon = obj.icon;
+                const aberto = objecoesAbertas.has(obj.id);
+                return (
+                  <button
+                    key={obj.id}
+                    type="button"
+                    onClick={() => (aberto ? fecharObjecao(obj.id) : abrirObjecao(obj.id))}
+                    className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
+                      aberto
+                        ? "border-primary bg-primary/10 text-primary shadow-sm"
+                        : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {obj.label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {objecoesAbertas.size > 0 && (
-          <div className="space-y-2">
-            {OBJECOES.filter((obj) => objecoesAbertas.has(obj.id)).map((obj) => {
-              const texto = preencherTagsObjecao(
-                obj.resposta,
-                nomeContatoExtraido,
-                valoresObjecao.segmento,
-                valoresObjecao.insumos,
-                valoresObjecao.cidadeEstado,
-              );
-              return (
+            {objecoes
+              .filter((obj) => objecoesAbertas.has(obj.id))
+              .map((obj) => (
                 <div
+                  id={`objecao-${obj.id}`}
                   key={obj.id}
-                  className="rounded-md border border-primary/30 bg-primary/5 p-3"
+                  className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-3"
                 >
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-xs font-semibold text-primary">{obj.label}</span>
                     <div className="flex items-center gap-1">
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={async () => {
-                          await navigator.clipboard.writeText(texto);
-                          toast.success("Resposta copiada");
-                        }}
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => copyObjecaoResposta(obj.resposta)}
                       >
                         <Copy className="mr-1 h-3 w-3" />
                         Copiar
@@ -1475,16 +1530,109 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => toggleObjecao(obj.id)}
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => fecharObjecao(obj.id)}
                       >
                         Fechar
                       </Button>
                     </div>
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{texto}</p>
+
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{obj.resposta}</p>
+
+                  {obj.extra && (
+                    <div className="mt-2">
+                      {!extrasRevelados.has(obj.id) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          onClick={() => toggleExtra(obj.id)}
+                        >
+                          {obj.extra.gatilho}
+                        </Button>
+                      ) : (
+                        <p className="mt-1 whitespace-pre-wrap rounded bg-background px-2 py-1.5 text-xs leading-relaxed">
+                          {obj.extra.texto}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {obj.routing && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {obj.routing.map((r) => (
+                        <Button
+                          key={r.targetId}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[11px]"
+                          onClick={() => irParaObjecao(r.targetId)}
+                        >
+                          {r.label}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 text-[11px]"
+                      onClick={() => irParaObjecao("fechamento")}
+                    >
+                      <CheckCircle2 className="mr-1 h-3 w-3" />
+                      Aceitou, fechar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[11px]"
+                      onClick={() => irParaObjecao("encerrar")}
+                    >
+                      <LogOut className="mr-1 h-3 w-3" />
+                      Não quis, encerrar
+                    </Button>
+                  </div>
                 </div>
-              );
-            })}
+              ))}
+
+            {terminais
+              .filter((t) => objecoesAbertas.has(t.id))
+              .map((t) => (
+                <div
+                  id={`objecao-${t.id}`}
+                  key={t.id}
+                  className="mt-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/40"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                      {t.label}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => copyObjecaoResposta(t.resposta)}
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        Copiar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => fecharObjecao(t.id)}
+                      >
+                        Fechar
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{t.resposta}</p>
+                </div>
+              ))}
           </div>
         )}
       </CardContent>
