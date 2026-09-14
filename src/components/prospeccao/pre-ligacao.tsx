@@ -387,38 +387,6 @@ export function PreLigacao({
     setCnpj(digits);
     setLoadingCnpj(true);
     setTelefones(null);
-    // ===== SANDBOX: Empresa Parâmetro de Teste (Metalúrgica fictícia) =====
-    // Intercepta o fluxo antes de chamar a BrasilAPI para permitir testes de
-    // ponta a ponta (script, pós-ligação, payload) sem consumir créditos.
-    if (digits === "00000000000100") {
-      const dossie = [
-        "CNPJ: 00.000.000/0001-00 (Matriz)",
-        "Razão social: METALÚRGICA PARANÁ LTDA",
-        "Nome fantasia: MetalMax Indústria",
-        "Situação cadastral: ATIVA",
-        "Data de abertura: 15/03/2012",
-        "Porte: GRANDE",
-        "Capital social: R$ 12.500.000,00",
-        "Atividade principal (CNAE): 25.39-0-01 - Serviços de usinagem, tornearia e solda",
-        "Endereço: Av. das Indústrias, 1500 · Distrito Industrial · Curitiba/PR · CEP 81000-000",
-        "Telefone: (41) 3344-5566 / (41) 99988-7766",
-        "E-mail: controladoria@metalurgicaparana.com.br",
-        "Quadro societário:",
-        "- Roberto Silveira (Sócio-Administrador) · desde 2012",
-        "- Carlos Eduardo Santos (Sócio) · desde 2015",
-      ].join("\n");
-      setEmpresaResumo("METALÚRGICA PARANÁ LTDA · Nome Fantasia: MetalMax · Porte: Grande Empresa");
-      if (!dadosDirtyRef.current) {
-        setDados(dossie);
-      } else {
-        toast.info("Mantendo suas edições no campo 'Dados da empresa' (sandbox não sobrescreveu).");
-      }
-      setScript("");
-      setContingenciaAtiva(false);
-      setLoadingCnpj(false);
-      toast.success("Empresa de teste injetada (sandbox — sem chamada real)");
-      return;
-    }
     try {
       let r = lookupCache.current.get(digits);
       if (!r) {
@@ -902,19 +870,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                 <Label htmlFor="cnpj" className="text-xs">
                   Buscar por CNPJ (BrasilAPI)
                 </Label>
-                {import.meta.env.DEV && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCnpj("00000000000100");
-                      handleLookup("00000000000100");
-                    }}
-                    className="text-[10px] uppercase tracking-wide text-amber-700 hover:text-amber-900 hover:underline"
-                    title="Injeta uma metalúrgica fictícia para testar o fluxo sem consumir APIs"
-                  >
-                    Injetar Empresa de Teste
-                  </button>
-                )}
               </div>
 
               <div className="mt-1 flex gap-2">
