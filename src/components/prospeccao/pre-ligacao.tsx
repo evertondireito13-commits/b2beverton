@@ -258,6 +258,9 @@ export function PreLigacao({
   const [reuniaoData, setReuniaoData] = useState((pre0 as Record<string, string>).reuniaoData ?? "");
   const [reuniaoHora, setReuniaoHora] = useState((pre0 as Record<string, string>).reuniaoHora ?? "");
   const [modoEsteira, setModoEsteira] = useState<boolean>(true);
+  // Preparação (passos 1–3) recolhida automaticamente assim que o script é
+  // gerado, pra não competir com o Fluxo da ligação por espaço na tela.
+  const [prepOpen, setPrepOpen] = useState<boolean>(true);
   const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
   // ---- Estado do fluxo de cards de "Contornar objeções" (Pré-ligação) ----
   // Nome do contato ativo, usado pra personalizar {NOME} nas respostas dos
@@ -317,6 +320,7 @@ export function PreLigacao({
       setActiveStep(null);
       setExtrasRevelados(new Set());
       setHistoricoObjecoes([]);
+      setPrepOpen(true);
 
       if (detail.preparationId) {
         try { window.sessionStorage.setItem(ACTIVE_PREPARATION_ID_KEY, detail.preparationId); } catch { /* noop */ }
@@ -454,6 +458,7 @@ export function PreLigacao({
     setActiveStep(null);
     setExtrasRevelados(new Set());
     setHistoricoObjecoes([]);
+    setPrepOpen(true);
     toast.success("Tudo limpo. Pronto para uma nova prospecção.");
   }
 
@@ -772,6 +777,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       if (cached) {
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
         setScriptOpen(true);
+        setPrepOpen(false);
         scrollToScript();
         void autoIniciarGravacao();
         toast.info("Script recuperado do cache (sem gastar créditos de IA)");
@@ -791,6 +797,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
       setScript(finalText);
       setScriptOpen(true);
+      setPrepOpen(false);
       scrollToScript();
       void autoIniciarGravacao();
     } catch (err) {
@@ -852,6 +859,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         setHistoricoObjecoes((prev) => (prev.length ? prev : ["abertura"]));
         const compiled = compileScriptLocally(promptText, leadComContato, dados.trim(), nomeContatoIA);
         setScript(compiled);
+        setPrepOpen(false);
         void autoIniciarGravacao();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Falha ao extrair contato");
@@ -1032,7 +1040,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     label: "Abertura principal",
     icon: MessageCircle,
     kind: "abertura",
-    resposta: `Oi, ${nomeParaObjecoes}, tudo bem? Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
+    resposta: `${nomeAtivo ? `Oi, ${nomeAtivo}, tudo bem?` : "Oi, tudo bem?"} Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
   };
 
   const objecoes: ObjecaoCard[] = [
@@ -1164,6 +1172,29 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
         <PromptLibraryPanel tipo="abordagem" />
 
+        {/* Preparação (passos 1–3): fica aberta enquanto o operador monta a
+            ligação, mas recolhe sozinha assim que o script é gerado — a
+            partir daí o que importa em tela é o Fluxo da ligação (passo 4).
+            Sempre dá pra reabrir clicando na barra abaixo, ex: pra corrigir
+            um dado ou recompilar o script. */}
+        <Collapsible open={prepOpen} onOpenChange={setPrepOpen}>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50"
+            >
+              <span className="flex items-center gap-2">
+                <span>{prepOpen ? "▼" : "▶"}</span>
+                <span>
+                  {prepOpen
+                    ? "Preparação da ligação (empresa, dados, script)"
+                    : `Preparação concluída${empresaResumo ? ` — ${empresaResumo.split("·")[0]?.trim()}` : ""}`}
+                </span>
+              </span>
+              {!prepOpen && <span className="text-[11px] font-normal underline">Editar</span>}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 pt-3">
 
         <div className="flex items-center gap-2">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
@@ -1543,6 +1574,9 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             </>
           )}
         </Button>
+
+          </CollapsibleContent>
+        </Collapsible>
 
 
         {script && (
