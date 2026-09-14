@@ -855,6 +855,15 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         <PromptLibraryPanel tipo="abordagem" />
 
 
+        <div className="flex items-center gap-2">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+            1
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Buscar empresa
+          </span>
+        </div>
+
         <div className="space-y-2">
           <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
             <button
@@ -1114,6 +1123,15 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         </div>
 
 
+        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+            2
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Conferir dados
+          </span>
+        </div>
+
         <div ref={dadosSectionRef}>
 
           <div className="flex items-center justify-between gap-2">
@@ -1143,6 +1161,15 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           />
         </div>
 
+
+        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+            3
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Gerar script
+          </span>
+        </div>
 
         <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
           <div className="flex flex-col">
