@@ -44,6 +44,9 @@ export const transcribeAudio = createServerFn({ method: "POST" }).middleware([re
       method: "POST",
       headers: { Authorization: `Bearer ${key}` },
       body: upstream,
+      // Evita a requisição travar indefinidamente se o gateway não responder
+      // (áudio grande + rede instável já causou funções penduradas).
+      signal: AbortSignal.timeout(30000),
     });
     const bodyText = await res.text();
     if (!res.ok) {
@@ -382,7 +385,6 @@ function sanitizeScriptOutput(text: string, systemPrompt: string): string {
   return extractFinalScriptOnly(out);
 }
 
-
 function enforceScriptTagReplacement(text: string, userContent: string): string {
   const leadText = extractLeadBlockFromUserContent(userContent);
   const name = extractValidatedNameFromUserContent(userContent) ?? "tudo bem?";
@@ -441,8 +443,7 @@ export type InterpretacaoConversa = {
   tipoContato: TipoContato;
 };
 
-const STATUS_SYSTEM_PROMPT = `Você é um analisador silencioso de ligações comerciais B2B.
-Leia a descrição livre da ligação escrita pelo consultor e devolva EXCLUSIVAMENTE um JSON válido (sem markdown, sem crase, sem texto extra) com esta forma exata:
+const STATUS_SYSTEM_PROMPT = `Você é um analisador silencioso de ligações comerciais B2B. Leia a descrição livre da ligação escrita pelo consultor e devolva EXCLUSIVAMENTE um JSON válido (sem markdown, sem crase, sem texto extra) com esta forma exata:
 
 {
   "status": "arquivado" | "reuniao" | "follow_up",
@@ -466,7 +467,6 @@ Regras de extração:
     * "portaria" => ficou travado na recepção/secretária/portaria/telefonista/intermediário; ou a secretária apenas INFORMOU quem é o responsável / pediu para enviar e-mail / disse que o responsável está ocupado / transferiu mas o responsável não atendeu; ou o consultor foi transferido para um setor mas falou com outro intermediário; ou o responsável foi apenas indicado/citado sem conversa efetiva.
 - REGRA CRÍTICA: "sugeriu falar com X", "o responsável é X", "quem cuida é X", "vou transferir para X" (sem confirmação de que X atendeu e conversou), "pediu para enviar e-mail para X", "X está em reunião/ocupado" => SEMPRE "portaria". Só marque "decisor" se ficar EXPLÍCITO no texto que o consultor efetivamente dialogou com o decisor (ex.: "falei com o Guido, ele disse que...", "conversei com o diretor João e ele...", "o sócio me atendeu e informou...").
 - Se não atendeu / caixa postal / sem contato humano => "portaria".
-
 
 NUNCA escreva explicações. Só o JSON.`;
 
@@ -538,9 +538,21 @@ export const interpretarStatusConversa = createServerFn({ method: "POST" }).midd
   });
 
 /* ------------------------------------------------------------------ *
- * Análise estruturada da conversa (JSON padronizado via generateObject)
+ * Análise estruturada + análise avançada da conversa, unificadas numa
+ * ÚNICA chamada de IA (generateObject com schema combinado).
+ *
+ * Antes: `analisarConversaEstruturada` e `analisarConversaAvancada` eram
+ * duas Server Functions independentes, cada uma disparando sua própria
+ * chamada de IA para o MESMO texto de descrição — ou seja, 2 créditos de
+ * IA gastos por ligação registrada no Pós-ligação, quando 1 já bastaria.
+ *
+ * Agora as duas continuam existindo com a MESMA assinatura de entrada e
+ * saída de antes (nada muda no front-end que já as chama), mas por baixo
+ * elas compartilham um cache em memória (`analiseCombinadaCache`) por
+ * texto de descrição: a primeira chamada dispara a única geração de IA
+ * combinada; a segunda (para a mesma descrição) reaproveita o resultado
+ * sem gastar mais um crédito.
  * ------------------------------------------------------------------ */
-
 const AnaliseConversaSchema = z.object({
   resumo_executivo: z.string(),
   nivel_interesse: z.enum(["alto", "medio", "baixo", "nenhum"]),
@@ -550,40 +562,86 @@ const AnaliseConversaSchema = z.object({
 
 export type AnaliseConversa = z.infer<typeof AnaliseConversaSchema>;
 
-const ANALISE_SYSTEM_PROMPT = `Você analisa ligações de prospecção tributária (BHM Advogados).
-Leia a transcrição/relato e devolva uma análise objetiva em português do Brasil.
+const AnaliseAvancadaSchema = z.object({
+  proporcao_fala_vendedor: z.number().min(0).max(100).nullable(),
+  termos_chave_cliente: z.array(z.string()).max(8),
+  sinais_de_fechamento: z.array(z.string()).max(5),
+  vendedor_falou_demais: z.boolean().nullable(),
+});
 
-Regras:
+export type AnaliseAvancada = z.infer<typeof AnaliseAvancadaSchema>;
+
+// Schema único que cobre os dois conjuntos de campos — usado numa ÚNICA
+// chamada de IA em vez de duas.
+const AnaliseCombinadaSchema = AnaliseConversaSchema.merge(AnaliseAvancadaSchema);
+type AnaliseCombinada = z.infer<typeof AnaliseCombinadaSchema>;
+
+const ANALISE_COMBINADA_SYSTEM_PROMPT = `Você analisa ligações de prospecção tributária (BHM Advogados). Leia a transcrição/relato e devolva UMA análise objetiva e completa em português do Brasil, cobrindo tanto o CONTEÚDO quanto a DINÂMICA da conversa.
+
+Sobre o conteúdo:
 - resumo_executivo: 1 a 3 frases sobre o que FOI conversado e o que FOI conquistado (tom positivo, factual).
 - nivel_interesse: alto | medio | baixo | nenhum.
 - objecoes_encontradas: lista curta das objeções reais ditas pelo contato (vazia se não houve).
 - proximo_passo_sugerido: ação concreta e única (ex.: "Retornar dia 12/05 falando com a Luana do financeiro").
+
+Sobre a dinâmica (não repita o resumo acima — foque em PADRÕES de como a conversa se desenrolou):
+- proporcao_fala_vendedor: estimativa de 0 a 100 do quanto o VENDEDOR (consultor) dominou a fala. Se o texto não permitir estimar, devolva null em vez de inventar um número.
+- termos_chave_cliente: até 8 termos ou expressões que o CLIENTE usou (não o vendedor).
+- sinais_de_fechamento: até 5 sinais concretos de avanço/interesse ditos pelo cliente (vazio se não houve).
+- vendedor_falou_demais: true/false se der para avaliar pelo texto; null se não der para saber.
+
 Não invente dados que não estejam no texto.`;
+
+// Cache em memória (por processo do servidor) para evitar 2 chamadas de IA
+// idênticas quando o Pós-ligação pede as duas análises da mesma descrição
+// em sequência. Sem TTL — o relato de uma ligação já registrada não muda —
+// mas com limite de tamanho para não crescer sem controle.
+const analiseCombinadaCache = new Map<string, AnaliseCombinada | null>();
+const ANALISE_CACHE_MAX_ENTRIES = 200;
+
+async function obterAnaliseCombinada(descricaoBruta: string): Promise<AnaliseCombinada | null> {
+  const chave = descricaoBruta.trim();
+  if (analiseCombinadaCache.has(chave)) {
+    return analiseCombinadaCache.get(chave) ?? null;
+  }
+
+  const key = process.env.LOVABLE_API_KEY;
+  if (!key) throw new Error("LOVABLE_API_KEY não configurada");
+
+  const gateway = createLovableAiGatewayProvider(key);
+  let resultado: AnaliseCombinada | null = null;
+  try {
+    const { object } = await generateObject({
+      model: gateway("google/gemini-2.5-flash"),
+      schema: AnaliseCombinadaSchema,
+      system: ANALISE_COMBINADA_SYSTEM_PROMPT,
+      prompt: `Conversa:\n${chave.slice(0, 20000)}`,
+      temperature: 0.2,
+    });
+    resultado = object;
+  } catch (err) {
+    // Degrada em silêncio: a análise é um complemento, nunca bloqueia o histórico.
+    resultado = null;
+    void (NoObjectGeneratedError.isInstance(err) ? null : null);
+  }
+
+  if (analiseCombinadaCache.size >= ANALISE_CACHE_MAX_ENTRIES) {
+    const primeiraChave = analiseCombinadaCache.keys().next().value;
+    if (primeiraChave !== undefined) analiseCombinadaCache.delete(primeiraChave);
+  }
+  analiseCombinadaCache.set(chave, resultado);
+  return resultado;
+}
 
 export const analisarConversaEstruturada = createServerFn({ method: "POST" })
   .middleware([requireBhmGate])
   .validator((input: unknown) => z.object({ descricao: z.string().min(1) }).parse(input))
   .handler(async ({ data }): Promise<AnaliseConversa | null> => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY não configurada");
-
-    const gateway = createLovableAiGatewayProvider(key);
-    try {
-      const { object } = await generateObject({
-        model: gateway("google/gemini-2.5-flash"),
-        schema: AnaliseConversaSchema,
-        system: ANALISE_SYSTEM_PROMPT,
-        prompt: `Conversa:\n${data.descricao.slice(0, 20000)}`,
-        temperature: 0.2,
-      });
-      return object;
-    } catch (err) {
-      // Degrada em silêncio: a análise é um complemento, nunca bloqueia o histórico.
-      if (NoObjectGeneratedError.isInstance(err)) return null;
-      return null;
-    }
+    const combinado = await obterAnaliseCombinada(data.descricao);
+    if (!combinado) return null;
+    const { resumo_executivo, nivel_interesse, objecoes_encontradas, proximo_passo_sugerido } = combinado;
+    return { resumo_executivo, nivel_interesse, objecoes_encontradas, proximo_passo_sugerido };
   });
-
 
 const CONTACT_NAME_SYSTEM_PROMPT = `Analise o texto fornecido. Seu objetivo é extrair APENAS o PRIMEIRO NOME de uma PESSOA FÍSICA real.
 
@@ -879,7 +937,6 @@ export const lookupCnpj = createServerFn({ method: "POST" }).middleware([require
     };
   });
 
-
 const NameInput = z.object({
   nome: z.string().trim().min(3, "Digite ao menos 3 caracteres"),
 });
@@ -908,6 +965,10 @@ export const searchCompanyByName = createServerFn({ method: "POST" }).middleware
         Accept: "application/json",
         Authorization: apiKey,
       },
+      // Sem timeout aqui antes, a busca por nome podia ficar pendurada
+      // indefinidamente se a CNPJá travasse — agora corta em 12s, igual ao
+      // lookupCnpj.
+      signal: AbortSignal.timeout(12000),
     });
 
     if (!res.ok) {
@@ -1063,7 +1124,6 @@ async function firecrawlScrape(url: string, apiKey: string): Promise<string | nu
   }
 }
 
-
 export const enrichPhones = createServerFn({ method: "POST" }).middleware([requireBhmGate])
   .validator((input: unknown) => EnrichPhonesInput.parse(input))
   .handler(async ({ data }) => {
@@ -1217,8 +1277,6 @@ export const enrichPhones = createServerFn({ method: "POST" }).middleware([requi
       fontesFalhas.push({ fonte: "Site oficial", motivo: "site não identificado" });
     }
 
-
-
     // ordena: prioridade ↑, depois número de fontes ↓ (quanto mais fontes confirmarem, melhor)
     const telefones = Array.from(acumulador.values()).sort((a, b) => {
       if (a.prioridade !== b.prioridade) return a.prioridade - b.prioridade;
@@ -1236,7 +1294,6 @@ export const enrichPhones = createServerFn({ method: "POST" }).middleware([requi
       fontesFalhas,
     };
   });
-
 
 // ==============================================================
 // Gerador de Ata Executiva (Central de Reuniões — Estágio 2)
@@ -1289,47 +1346,18 @@ Retorne APENAS o texto da ata em Markdown, sem preâmbulo.`;
   });
 
 /* ------------------------------------------------------------------ *
- * Análise AVANÇADA da dinâmica da conversa (aditiva, opcional)
+ * analisarConversaAvancada — mantida com a MESMA assinatura de antes.
+ * Por baixo, reaproveita o mesmo cache/chamada combinada usada por
+ * `analisarConversaEstruturada` (ver bloco acima).
  * ------------------------------------------------------------------ */
-
-const AnaliseAvancadaSchema = z.object({
-  proporcao_fala_vendedor: z.number().min(0).max(100).nullable(),
-  termos_chave_cliente: z.array(z.string()).max(8),
-  sinais_de_fechamento: z.array(z.string()).max(5),
-  vendedor_falou_demais: z.boolean().nullable(),
-});
-
-export type AnaliseAvancada = z.infer<typeof AnaliseAvancadaSchema>;
-
-const ANALISE_AVANCADA_SYSTEM_PROMPT = `Você analisa a DINÂMICA de uma ligação de
-prospecção tributária (BHM Advogados) a partir da transcrição/relato.
-Não repita o resumo da conversa — foque em PADRÕES: quem dominou a fala, que
-termos o CLIENTE usou (não o vendedor), e se houve sinais concretos de avanço.
-Se o texto não permitir estimar algo (ex.: proporção de fala), devolva null
-nesse campo em vez de inventar um número.`;
-
 export const analisarConversaAvancada = createServerFn({ method: "POST" })
   .middleware([requireBhmGate])
   .validator((input: unknown) => z.object({ descricao: z.string().min(1) }).parse(input))
   .handler(async ({ data }): Promise<AnaliseAvancada | null> => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("LOVABLE_API_KEY não configurada");
-
-    const gateway = createLovableAiGatewayProvider(key);
-    try {
-      const { object } = await generateObject({
-        model: gateway("google/gemini-2.5-flash"),
-        schema: AnaliseAvancadaSchema,
-        system: ANALISE_AVANCADA_SYSTEM_PROMPT,
-        prompt: `Conversa:\n${data.descricao.slice(0, 20000)}`,
-        temperature: 0.2,
-      });
-      return object;
-    } catch (err) {
-      // Degrada em silêncio: nunca bloqueia o histórico.
-      if (NoObjectGeneratedError.isInstance(err)) return null;
-      return null;
-    }
+    const combinado = await obterAnaliseCombinada(data.descricao);
+    if (!combinado) return null;
+    const { proporcao_fala_vendedor, termos_chave_cliente, sinais_de_fechamento, vendedor_falou_demais } = combinado;
+    return { proporcao_fala_vendedor, termos_chave_cliente, sinais_de_fechamento, vendedor_falou_demais };
   });
 
 /** Persiste a análise de dinâmica (tabela travada — só via service role). */
