@@ -188,6 +188,16 @@ export function PreLigacao({
   // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
+  // Referência do bloco de script gerado — usada para rolar a tela até ele
+  // assim que a compilação/geração termina (o operador pode estar com a tela
+  // rolada pra baixo, na Textarea "Dados da empresa", e não perceber o script
+  // pronto aparecendo).
+  const scriptSectionRef = useRef<HTMLDivElement | null>(null);
+  function scrollToScript() {
+    setTimeout(() => {
+      scriptSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
   // "Dirty" flag: vira true assim que o operador edita manualmente a Textarea
   // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI,
   // Preparação Noturna, ACTIVE_LEAD_EVENT) NÃO podem sobrescrever o campo.
@@ -360,15 +370,10 @@ export function PreLigacao({
 
 
   async function handleLookup(preset?: string) {
-    // Lê o valor atual do input (fallback caso o estado ainda não tenha atualizado),
-    // aceita qualquer formato: 12.345.678/0001-90, 12345678000190, com espaços, etc.
-    let raw: string;
-    if (preset !== undefined) {
-      raw = preset;
-    } else {
-      const inputEl = document.getElementById("cnpj") as HTMLInputElement | null;
-      raw = (inputEl?.value ?? cnpj ?? "").toString();
-    }
+    // Aceita qualquer formato: 12.345.678/0001-90, 12345678000190, com espaços, etc.
+    // Usa sempre o estado React (nunca lê o DOM diretamente) — o campo "cnpj"
+    // já reflete o valor digitado/colado via onChange antes de qualquer chamada.
+    const raw = (preset !== undefined ? preset : cnpj ?? "").toString();
     const digits = raw.replace(/[^\d]/g, "");
     if (digits.length === 0) {
       toast.error("Cole ou digite o CNPJ no campo antes de buscar");
@@ -665,6 +670,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       if (cached) {
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
         setScriptOpen(true);
+        scrollToScript();
         void autoIniciarGravacao();
         toast.info("Script recuperado do cache (sem gastar créditos de IA)");
         return;
@@ -683,6 +689,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
       setScript(finalText);
       setScriptOpen(true);
+      scrollToScript();
       void autoIniciarGravacao();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Falha na IA");
@@ -748,6 +755,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         setLoadingGen(false);
       }
       setScriptOpen(true);
+      scrollToScript();
       toast.success(
         currentLeadState
           ? "Script compilado com contato extraído por IA."
@@ -925,7 +933,12 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   }}
                   onKeyDown={(e) => e.key === "Enter" && handleLookup()}
                 />
-                <Button onClick={() => handleLookup()} disabled={loadingCnpj} variant="secondary">
+                <Button
+                  onClick={() => handleLookup()}
+                  disabled={loadingCnpj}
+                  variant="secondary"
+                  aria-label="Buscar CNPJ"
+                >
                   {loadingCnpj ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
@@ -947,7 +960,12 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   onChange={(e) => setNomeBusca(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
                 />
-                <Button onClick={handleBuscaNome} disabled={loadingBusca} variant="secondary">
+                <Button
+                  onClick={handleBuscaNome}
+                  disabled={loadingBusca}
+                  variant="secondary"
+                  aria-label="Buscar por nome"
+                >
                   {loadingBusca ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
@@ -1239,6 +1257,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
 
         {script && (
+          <div ref={scriptSectionRef}>
           <Collapsible
             open={scriptOpen}
             onOpenChange={setScriptOpen}
@@ -1298,6 +1317,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               </div>
             </CollapsibleContent>
           </Collapsible>
+          </div>
         )}
       </CardContent>
     </Card>
