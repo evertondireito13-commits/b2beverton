@@ -165,6 +165,23 @@ type PreHandoffPayload = {
   observacoes?: string;
 };
 
+// ---- Caches em memória compartilhados entre montagens do componente ----
+// Ficam no escopo do módulo (não em useRef) de propósito: o PreLigacao é
+// desmontado toda vez que o operador troca de aba (Pós-ligação, Histórico
+// etc.), e um useRef local perderia o cache nesse momento — fazendo o app
+// rebuscar dados e regastar créditos de IA/API à toa ao simplesmente voltar
+// pra aba Pré-ligação. Guardando aqui, o cache sobrevive à navegação entre
+// abas e só é perdido em um reload completo da página.
+type LookupResult = Awaited<ReturnType<typeof lookupCnpj>>;
+type Telefones = Awaited<ReturnType<typeof enrichPhones>>;
+const lookupCache = new Map<string, LookupResult>();
+const phonesCache = new Map<string, Telefones>();
+const aiCache = new Map<string, string>();
+// Cache da extração de nome do contato por IA, por texto de dados colado —
+// evita gastar um crédito de IA de novo para o MESMO texto (ex: reprocessar
+// o script sem alterar os dados da empresa).
+const contactNameCache = new Map<string, string>();
+
 export function PreLigacao({
   promptText,
 }: {
@@ -332,7 +349,6 @@ export function PreLigacao({
   type Match = Awaited<ReturnType<typeof searchCompanyByName>>["itens"][number];
   const [resultados, setResultados] = useState<Match[]>([]);
 
-  type Telefones = Awaited<ReturnType<typeof enrichPhones>>;
   const [telefones, setTelefones] = useState<Telefones | null>((sess0.telefones as Telefones | null) ?? null);
   const [loadingFones, setLoadingFones] = useState(false);
 
@@ -344,16 +360,15 @@ export function PreLigacao({
   const runEnrichPhones = useServerFn(enrichPhones);
 
   async function extrairNomeContatoComIA(textoBruto: string): Promise<string> {
+    const chave = textoBruto.trim();
+    const cached = contactNameCache.get(chave);
+    if (cached) return cached;
     const { nome } = await runExtractContactName({ data: { textoBruto } });
-    return nome?.trim() || "tudo bem?";
+    const resultado = nome?.trim() || "tudo bem?";
+    contactNameCache.set(chave, resultado);
+    return resultado;
   }
 
-
-  // ---- Caches em memória ----
-  type LookupResult = Awaited<ReturnType<typeof lookupCnpj>>;
-  const lookupCache = useRef<Map<string, LookupResult>>(new Map());
-  const phonesCache = useRef<Map<string, Telefones>>(new Map());
-  const aiCache = useRef<Map<string, string>>(new Map());
 
   // Normaliza nomes de empresa para comparação (sem acentos, sem sufixos societários).
   function normalizarNomeEmpresa(v: string) {
@@ -388,10 +403,10 @@ export function PreLigacao({
     setLoadingCnpj(true);
     setTelefones(null);
     try {
-      let r = lookupCache.current.get(digits);
+      let r = lookupCache.get(digits);
       if (!r) {
         r = await runLookup({ data: { cnpj: digits } });
-        lookupCache.current.set(digits, r);
+        lookupCache.set(digits, r);
       }
       const socios = r.socios
         .map((s) =>
@@ -460,7 +475,7 @@ export function PreLigacao({
 
 
       // Se já enriquecemos telefones para este CNPJ nesta sessão, restaura do cache.
-      const cachedPhones = phonesCache.current.get(digits);
+      const cachedPhones = phonesCache.get(digits);
       if (cachedPhones) setTelefones(cachedPhones);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err ?? "");
@@ -495,7 +510,7 @@ export function PreLigacao({
       toast.error("Busque um CNPJ válido antes de enriquecer telefones");
       return;
     }
-    const cached = phonesCache.current.get(digits);
+    const cached = phonesCache.get(digits);
     if (cached) {
       setTelefones(cached);
       toast.info("Telefones carregados do cache (sem gastar créditos)");
@@ -504,7 +519,7 @@ export function PreLigacao({
     setLoadingFones(true);
     try {
       const res = await runEnrichPhones({ data: { cnpj: digits } });
-      phonesCache.current.set(digits, res);
+      phonesCache.set(digits, res);
       setTelefones(res);
       updateSessaoAtiva({ telefones: res });
 
@@ -634,7 +649,7 @@ ${hydratedPromptText}
 COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o script de Cold Call substituindo TODAS as tags {NOME}, {SEGMENTO}, {CIDADE}, {CIDADE_ESTADO} e {INSUMOS} pelos dados reais extraídos. É proibido retornar chaves { } no texto.`;
 
       const cacheKey = `${systemInstruction}\u0000${userContent}`;
-      const cached = aiCache.current.get(cacheKey);
+      const cached = aiCache.get(cacheKey);
       if (cached) {
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
         setScriptOpen(true);
@@ -653,7 +668,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       const finalText = contemAlucinacaoDeExtracao(enforcedText, lead, dados.trim(), nomeContatoIA)
         ? compileScriptLocally(promptText, lead, dados.trim(), nomeContatoIA)
         : enforcedText;
-      aiCache.current.set(cacheKey, finalText);
+      aiCache.set(cacheKey, finalText);
 
       setScript(finalText);
       setScriptOpen(true);
