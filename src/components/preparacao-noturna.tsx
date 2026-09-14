@@ -1,1245 +1,3044 @@
-import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
-import { generateWithAI, extractContactNameWithAI, lookupCnpj, transcribeAudio, searchCompanyByName, enrichPhones, interpretarStatusConversa } from "@/lib/prospeccao.functions";
-import { logCall } from "@/lib/call-logs.functions";
-import { cancelPendingFollowUpsForCompany, createFollowUp, extractFollowUpFromCall, listFollowUps, type FollowUp } from "@/lib/follow-ups.functions";
-import { upsertLead as upsertLeadCentral, isLeadIsolated, findLead, addLeadFollowUp, updateLead as updateLeadCentral } from "@/lib/leads-store";
-import {
-  getActivePromptText,
-  loadLibrary,
-  createPrompt,
-  updatePrompt,
-  deletePrompt,
-  setActivePrompt,
-  PROMPT_LIBRARY_EVENT,
-  syncLibraryFromCloud,
-  type PromptItem,
-  type PromptTipo,
-  type PromptLibrary,
-} from "@/lib/prompts-store";
-
-import {
-  buildRegistroFromHistorico,
-  saveHistorico,
-  updateHistoricoStatus,
-  updateHistoricoEmpresa,
-  updateHistoricoContatoCargo,
-  loadRascunho,
-  updateRascunho,
-  clearRascunho,
-  extractTelefones,
-  extractEmailsPessoas,
-  textoIndicaNegativaComercial,
-  getConsultor,
-  getSessionConsultor,
-  loginConsultor,
-  logoutConsultor,
-  listHistoricos,
-  type HistoricoEmpresa,
-} from "@/lib/historico-store";
-import {
-  addActivity,
-  renameActivitiesByEmpresa,
-  updateActivityContatoCargo,
-  getActiveLead,
-  getTodayActivities,
-  setActiveLead,
-  todaySaoPauloISO,
-  ACTIVE_LEAD_EVENT,
-  type ActiveLeadLike,
-  type BhmActivityLog as _BhmActivityLog,
-} from "@/lib/daily-activities";
-
-
-// Re-exposta no escopo global do arquivo, conforme especificação.
-export type BhmActivityLog = _BhmActivityLog;
-
-import {
-  ConsultarHistoricoCard,
-  emitHistoricoUpdated,
-} from "@/components/historico-panel";
-import {
-  GO_POS_EVENT,
-  PENDING_AUDIO_EVENT,
-  clearPendingAudio,
-  formatSecs,
-  getPendingAudio,
-  isRecording,
-  startCallRecording,
-} from "@/lib/call-recorder";
-import { getRunningTimer, startTimer } from "@/lib/productivity-store";
-
-import { CommandPalette } from "@/components/command-palette";
-import { NotificationsCenter } from "@/components/notifications-center";
-import { CallTimerWidget } from "@/components/call-timer";
-
-import { EditableCompanyName } from "@/components/editable-company-name";
-import { LOAD_PRE_LIGACAO_EVENT, PREPARACAO_REALIZADA_EVENT, ACTIVE_PREPARATION_ID_KEY, PENDING_PRE_LIGACAO_KEY, markPreparacaoRealizadaByCompany } from "@/components/preparacao-noturna";
-
-
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Toaster } from "@/components/ui/sonner";
+import { useNavigate } from "@tanstack/react-router";
+import { Play, Plus, Trash2, Loader2, Moon, Check, CalendarDays, X, Pencil, Save, Maximize2, ArrowRight, GripVertical, Search, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
 import {
-  Copy,
-  Download,
-  Search,
-  Sparkles,
-  Settings2,
-  RotateCcw,
-  Loader2,
-  Send,
-  Upload,
-  Mic,
-  Square,
-  Check,
-  Trash2,
-  Link2,
-  History as HistoryIcon,
-} from "lucide-react";
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
+import { useServerFn } from "@tanstack/react-start";
+import { generateWithAI } from "@/lib/prospeccao.functions";
+import { consultarCnpj } from "@/lib/cnpj-enriquecimento.functions";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+  ETAPAS,
+  ETAPA_LABEL,
+  etapaDaEmpresa,
+  cnpjValido,
+  type EtapaPipeline,
+} from "@/lib/pipeline-preparacao";
+import { scoreEmpresas } from "@/lib/lead-score";
+
+import { loadDeletedPastaIds, markPastaDeleted, unmarkPastaDeleted } from "@/lib/pastas-tombstones";
+import { getSessionConsultor, getConsultor, empresaKey } from "@/lib/historico-store";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+  parseDadosCnpj,
+  cnpjDigitos,
+  cnpjRaiz,
+  unidadeLabel,
+  cidadeUfDoTexto,
+} from "@/lib/cnpj-raw-parser";
+import { verificarEmailDominio, type ResultadoVerificacaoEmail } from "@/lib/email-verify";
 
-import { CallRecorderButton } from "@/components/call-recorder-button";
-import { HistoricoEmpresaSheet } from "@/components/prospeccao/historico-empresa-sheet";
+export const LOAD_PRE_LIGACAO_EVENT = "bhm:load-to-pre-ligacao";
+export const PREPARACAO_REALIZADA_EVENT = "bhm:preparacao-realizada";
+export const ACTIVE_PREPARATION_ID_KEY = "bhm.activePreparationId";
+export const PENDING_PRE_LIGACAO_KEY = "bhm.pending-pre-ligacao";
 
-import { useHotkey } from "@/hooks/use-hotkey";
+type EmpresaStatus = "pending" | "realizada" | "sem_interesse";
 
-import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
-import { PromptLibraryPanel, inferirSegmentoPorCnae, montarLeadFallback, preencherTagsDoScript, contemAlucinacaoDeExtracao, compileScriptLocally, parseLeadFromDados, type ActiveLeadData } from "@/components/prospeccao/shared";
-import { extractFinalScriptOnly } from "@/lib/script-output";
-
-/** Payload de handoff da Preparação Noturna para a Pré-ligação. */
-type PreHandoffPayload = {
+// Contato adicional (sócio/pessoa extra) além do "Contato principal" —
+// suporta as empresas que têm mais de um sócio/administrador relevante.
+export type ContatoExtra = {
+  id: string;
   nome?: string;
-  textoBruto?: string;
-  preparationId?: string;
+  cargo?: string;
+  telefone?: string;
+  email?: string;
+};
+
+type Empresa = {
+  id: string;
+  nome: string;
+  textoBruto: string;
+  extraido?: boolean;
+  status?: EmpresaStatus;
+  ligadoEm?: string;
   razaoSocial?: string;
   cnpj?: string;
   contato?: string;
   cargo?: string;
   telefone?: string;
+  telefoneSecundario?: string;
   email?: string;
+  emailSecundario?: string;
+  contatosExtras?: ContatoExtra[];
   observacoes?: string;
+  uf?: string;
+  setor?: string;
+  regime?: string;
 };
 
-export function PreLigacao({
-  promptText,
-}: {
-  promptText: string;
-}) {
-  const rascunho = loadRascunho();
-  const pre0 = rascunho.pre ?? {};
-  const sess0 = loadSessaoAtiva();
-  const [cnpj, setCnpj] = useState(sess0.cnpj ?? pre0.cnpj ?? "");
-  const [dados, setDados] = useState(sess0.dados ?? pre0.dados ?? "");
-  const [script, setScript] = useState(sess0.script ?? pre0.script ?? "");
-  const [scriptOpen, setScriptOpen] = useState(true);
-  const [empresaResumo, setEmpresaResumo] = useState<string | null>(sess0.empresaResumo ?? pre0.empresaResumo ?? null);
-  const [loadingCnpj, setLoadingCnpj] = useState(false);
-  const [loadingGen, setLoadingGen] = useState(false);
-  const [searchMode, setSearchMode] = useState<"cnpj" | "nome">("cnpj");
-  const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
-  const [modoEsteira, setModoEsteira] = useState<boolean>(true);
-  const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
-  // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
-  // sem bloquear o operador durante a ligação (Graceful Degradation).
-  const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
-  const dadosSectionRef = useRef<HTMLDivElement | null>(null);
-  // "Dirty" flag: vira true assim que o operador edita manualmente a Textarea
-  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI,
-  // Preparação Noturna, ACTIVE_LEAD_EVENT) NÃO podem sobrescrever o campo.
-  const dadosDirtyRef = useRef<boolean>(false);
+const UFS_BR = [
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT",
+  "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
+];
 
-  // Escuta o evento disparado pela Preparação Noturna (sidebar) para carregar
-  // uma empresa direto na mesa de ação: preenche o textarea, define contexto
-  // ativo e rola até a seção "Dados da empresa".
-  useEffect(() => {
-    function onLoad(ev: Event) {
-      const detail = (ev as CustomEvent<PreHandoffPayload>).detail ?? {};
+const REGIMES = ["Simples Nacional", "Lucro Presumido", "Lucro Real", "MEI"];
 
-      // NOVA EMPRESA vinda do Preparação Noturna: limpa TUDO da empresa
-      // anterior (CNPJ, dados colados, script compilado, resultados de
-      // busca, telefones, lead ativo, modo contingência) antes de aplicar os
-      // dados da nova empresa — evita ficar "dado em cima de dado" na tela.
-      // Também zera o "dirty flag": sem isso, se o operador tivesse editado
-      // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
-      // impediria os dados da nova empresa de aparecerem.
-      limparRascunhoPre();
-      clearRascunho(); // garante que o rascunho da Pós-ligação também é limpo,
-                        // mesmo que aquela aba não esteja montada agora
-      setCurrentLeadState(null);
-      setContingenciaAtiva(false);
-      dadosDirtyRef.current = false;
 
-      if (detail.preparationId) {
-        try { window.sessionStorage.setItem(ACTIVE_PREPARATION_ID_KEY, detail.preparationId); } catch { /* noop */ }
+
+function todayISO(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function consultorSlug(): string {
+  try {
+    return (getSessionConsultor() ?? getConsultor()) || "shared";
+  } catch {
+    return "shared";
+  }
+}
+
+function storageKey(date: string): string {
+  return `bhm-preparacao::${date}::${consultorSlug()}`;
+}
+
+function preparationAliases(): string[] {
+  const consultor = consultorSlug();
+  if (consultor === "Everton Pereira") return ["Everton Pereira", "Everton", "everton"];
+  if (consultor === "Eloane Manfroni") {
+    return ["Eloane Manfroni", "Heluane Manfroni", "Eluane Manfroni", "Eloane", "Heluane", "Eluane"];
+  }
+  return [consultor];
+}
+
+function parseEmpresaList(raw: string | null): Empresa[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as Empresa[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function empresaIdentity(item: Empresa): string {
+  const cnpj = (item.cnpj ?? "").replace(/\D/g, "");
+  if (cnpj.length >= 8) return `cnpj:${cnpj}`;
+  const nome = (item.razaoSocial || item.nome || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  return nome ? `nome:${nome}` : `id:${item.id}`;
+}
+
+function load(date: string): Empresa[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const canonicalKey = storageKey(date);
+    const candidateKeys = new Set<string>([
+      canonicalKey,
+      ...preparationAliases().map((alias) => `bhm-preparacao::${date}::${alias}`),
+      // Formatos anteriores ao isolamento por consultor.
+      `bhm-preparacao::${date}`,
+    ]);
+    const merged = new Map<string, Empresa>();
+    for (const key of candidateKeys) {
+      for (const item of parseEmpresaList(window.localStorage.getItem(key))) {
+        const identity = empresaIdentity(item);
+        const previous = merged.get(identity);
+        merged.set(identity, previous ? { ...previous, ...item } : item);
       }
-      const nome = (detail.nome ?? "").trim();
-      const texto = (detail.textoBruto ?? "").trim();
-      const razaoSocial = (detail.razaoSocial ?? "").trim();
-      const contato = (detail.contato ?? "").trim();
-      const cargo = (detail.cargo ?? "").trim();
-      const telefone = (detail.telefone ?? "").trim();
-      const email = (detail.email ?? "").trim();
-      const cnpjDigits = (detail.cnpj ?? "").replace(/\D/g, "");
-      // Texto vindo da Preparação Noturna é dado bruto informado pelo operador.
-      // Ele deve ser preservado contra lookup automático durante a compilação.
-      if (texto && !dadosDirtyRef.current) {
-        setDados(texto);
-        dadosDirtyRef.current = true;
-      }
-      else if (texto && dadosDirtyRef.current) {
-        toast.info("Mantendo suas edições no campo 'Dados da empresa'.");
-      }
-      const nomePrincipal = razaoSocial || nome;
-      if (cnpjDigits) setCnpj(cnpjDigits);
-      if (nomePrincipal) {
-        const lead: ActiveLeadData = {
-          cnpj: cnpjDigits,
-          razaoSocial: nomePrincipal,
-          nomeFantasia: nome || nomePrincipal,
-          cnaePrincipal: "",
-          cidade: "",
-          uf: "",
-          endereco: "",
-          ...(contato ? { contatoNome: cargo ? `${contato} (${cargo})` : contato } : {}),
-        };
-        setActiveLead(lead);
-        setCurrentLeadState(lead);
-        const extras = [telefone, email].filter(Boolean).join(" · ");
-        setEmpresaResumo(extras ? `${nomePrincipal} · ${extras}` : nomePrincipal);
-      } else if (texto) {
-        // Sem nome extraído — tenta parse do texto bruto para liberar compilação
-        const parsed = parseLeadFromDados(texto, "");
-        if (parsed) {
-          setCurrentLeadState(parsed);
-          setActiveLead(parsed);
-          setEmpresaResumo(parsed.razaoSocial);
+    }
+    const recovered = Array.from(merged.values());
+    // Consolida silenciosamente os registros legados na chave atual.
+    if (recovered.length > 0) {
+      window.localStorage.setItem(canonicalKey, JSON.stringify(recovered));
+    }
+    return recovered;
+  } catch {
+    return [];
+  }
+}
+
+function save(date: string, list: Empresa[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey(date), JSON.stringify(list));
+    window.dispatchEvent(new CustomEvent("bhm:preparacao-updated", { detail: { date } }));
+  } catch {
+    /* noop */
+  }
+}
+
+function newId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const ACTIVE_DATE_KEY = "bhm-preparacao::active-date";
+
+// ------------------------------------------------------------------ pastas
+// Uma "pasta" (carteira) é apenas outro balde de armazenamento, no mesmo
+// formato das listas por data — a chave vira `pasta:<id>` em vez de YYYY-MM-DD.
+export type PastaPreparacao = { id: string; nome: string; cor?: string };
+
+const PASTAS_KEY_BASE = "bhm-preparacao::pastas";
+
+function pastasKey(): string {
+  return `${PASTAS_KEY_BASE}::${consultorSlug()}`;
+}
+
+export function isPastaBucket(bucket: string): boolean {
+  return bucket.startsWith("pasta:");
+}
+
+export function loadPastas(): PastaPreparacao[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(pastasKey());
+    const parsed = raw ? (JSON.parse(raw) as PastaPreparacao[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    const excluidas = loadDeletedPastaIds();
+    return parsed.filter((p) => p && p.id && p.nome && !excluidas.has(String(p.id)));
+  } catch {
+    return [];
+  }
+}
+
+function savePastas(list: PastaPreparacao[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(pastasKey(), JSON.stringify(list));
+  } catch {
+    /* noop */
+  }
+}
+
+function latestDateWithCompanies(): string | null {
+  if (typeof window === "undefined") return null;
+  const aliases = new Set(preparationAliases());
+  const dates = new Set<string>();
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (!key) continue;
+      const match = /^bhm-preparacao::(\d{4}-\d{2}-\d{2})(?:::(.+))?$/.exec(key);
+      if (!match) continue;
+      const [, candidateDate, owner] = match;
+      if (owner && !aliases.has(owner)) continue;
+      if (parseEmpresaList(window.localStorage.getItem(key)).length > 0) dates.add(candidateDate);
+    }
+  } catch {
+    return null;
+  }
+  return Array.from(dates).sort().at(-1) ?? null;
+}
+
+function loadActiveDate(): string {
+  if (typeof window === "undefined") return todayISO();
+  try {
+    const raw =
+      window.localStorage.getItem(`${ACTIVE_DATE_KEY}::${consultorSlug()}`) ??
+      window.localStorage.getItem(ACTIVE_DATE_KEY);
+    if (raw && isPastaBucket(raw) && loadPastas().some((p) => `pasta:${p.id}` === raw)) return raw;
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) && load(raw).length > 0) return raw;
+    const recoveredDate = latestDateWithCompanies();
+    if (recoveredDate) return recoveredDate;
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  } catch { /* noop */ }
+  return todayISO();
+}
+
+
+function saveActiveDate(date: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${ACTIVE_DATE_KEY}::${consultorSlug()}`, date);
+  } catch { /* noop */ }
+}
+
+// Registra (de volta) uma empresa na lista do dia da Preparação Noturna.
+// Usado quando a empresa é chamada à Pré-ligação por fora do fluxo normal.
+export function addEmpresaToPreparacaoNoturna(input: {
+  razaoSocial?: string | null;
+  nome?: string | null;
+  cnpj?: string | null;
+  contato?: string | null;
+  cargo?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+}): void {
+  if (typeof window === "undefined") return;
+  const date = todayISO();
+  const nome = (input.razaoSocial || input.nome || "").trim();
+  if (!nome) return;
+  const candidato: Empresa = {
+    id: `readd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    nome,
+    razaoSocial: input.razaoSocial ?? nome,
+    cnpj: input.cnpj ?? undefined,
+    contato: input.contato ?? undefined,
+    cargo: input.cargo ?? undefined,
+    telefone: input.telefone ?? undefined,
+    email: input.email ?? undefined,
+    textoBruto: nome,
+    status: "pending",
+  };
+  const atual = load(date);
+  const identidade = empresaIdentity(candidato);
+  if (atual.some((e) => empresaIdentity(e) === identidade)) return;
+  save(date, [...atual, candidato]);
+}
+
+// Procura, em todas as datas salvas para o consultor atual, uma empresa
+// compatível pelo CNPJ (>=8 dígitos) ou pelo nome normalizado. Usado pelo
+// Follow-up para reidratar o dossiê salvo na Preparação Noturna quando o
+// operador clica em "Iniciar" e queremos preencher também a Pré-ligação.
+export type PreparationMatch = {
+  nome: string;
+  textoBruto: string;
+  preparationId: string;
+  razaoSocial?: string;
+  contato?: string;
+  cargo?: string;
+  telefone?: string;
+  email?: string;
+};
+
+export function findPreparationForCompany(
+  cnpj?: string | null,
+  nome?: string | null,
+): PreparationMatch | null {
+  if (typeof window === "undefined") return null;
+  const cnpjDigits = (cnpj ?? "").replace(/\D/g, "");
+  const normalize = (v: string) =>
+    v.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const target = normalize(nome ?? "");
+  const prefix = `bhm-preparacao::`;
+  const suffix = `::${consultorSlug()}`;
+  let best: Empresa | null = null;
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k || !k.startsWith(prefix) || !k.endsWith(suffix)) continue;
+      const raw = window.localStorage.getItem(k);
+      if (!raw) continue;
+      let arr: Empresa[] = [];
+      try { arr = JSON.parse(raw) as Empresa[]; } catch { continue; }
+      if (!Array.isArray(arr)) continue;
+      for (const e of arr) {
+        const eCnpj = (e.cnpj ?? "").replace(/\D/g, "");
+        if (cnpjDigits.length >= 8 && eCnpj.length >= 8 && eCnpj === cnpjDigits) {
+          return toMatch(e, nome);
+        }
+        const eNorm = normalize(e.nome || e.razaoSocial || "");
+        if (target.length >= 5 && eNorm.length >= 5 && (eNorm === target || eNorm.includes(target) || target.includes(eNorm))) {
+          best = e;
         }
       }
-      toast.success(nomePrincipal ? `Lead carregado: ${nomePrincipal}` : "Lead carregado no Pré-ligação");
-      // Com CNPJ estruturado vindo da Preparação Noturna, já busca os dados
-      // oficiais automaticamente (mesmo fluxo do botão manual).
-      if (cnpjDigits.length === 14) {
-        setTimeout(() => { void handleLookup(cnpjDigits); }, 80);
-      }
-      setTimeout(() => {
-        dadosSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 60);
     }
-    window.addEventListener(LOAD_PRE_LIGACAO_EVENT, onLoad as EventListener);
-    // Handoff da rota /preparacao — consome payload pendente após navegação
-    try {
-      const raw = window.sessionStorage.getItem(PENDING_PRE_LIGACAO_KEY);
-      if (raw) {
-        window.sessionStorage.removeItem(PENDING_PRE_LIGACAO_KEY);
-        const detail = JSON.parse(raw) as PreHandoffPayload;
-        // pequeno atraso para garantir que outros efeitos de mount rodem antes
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent(LOAD_PRE_LIGACAO_EVENT, { detail }));
-        }, 50);
-      }
-    } catch { /* noop */ }
-    return () => window.removeEventListener(LOAD_PRE_LIGACAO_EVENT, onLoad as EventListener);
-  }, []);
+  } catch { /* noop */ }
+  if (!best) return null;
+  return toMatch(best, nome);
+}
 
+function toMatch(e: Empresa, nome?: string | null): PreparationMatch {
+  return {
+    nome: e.nome || nome || "Empresa",
+    textoBruto: e.textoBruto || "",
+    preparationId: e.id,
+    razaoSocial: e.razaoSocial,
+    contato: e.contato,
+    cargo: e.cargo,
+    telefone: e.telefone,
+    email: e.email,
+  };
+}
 
-
-
-  // Autosave: rascunho unificado + sessão ativa v2
-  useEffect(() => {
-    updateRascunho({ pre: { cnpj, dados, script, empresaResumo, nomeBusca } });
-    updateSessaoAtiva({ cnpj, dados, script, empresaResumo });
-  }, [cnpj, dados, script, empresaResumo, nomeBusca]);
-
-  function limparRascunhoPre() {
-    setCnpj("");
-    setDados("");
-    dadosDirtyRef.current = false;
-    setScript("");
-    setEmpresaResumo(null);
-    setNomeBusca("");
-    setResultados([]);
-    setTelefones(null);
-    updateRascunho({ pre: { cnpj: "", dados: "", script: "", empresaResumo: null, nomeBusca: "" } });
-    updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
-  }
-
-  function limparTudo() {
-    limparRascunhoPre();
-    setCurrentLeadState(null);
-    clearRascunho();
-    setActiveLead(null);
-    toast.success("Tudo limpo. Pronto para uma nova prospecção.");
-  }
-
-
-
-  const [loadingBusca, setLoadingBusca] = useState(false);
-  type Match = Awaited<ReturnType<typeof searchCompanyByName>>["itens"][number];
-  const [resultados, setResultados] = useState<Match[]>([]);
-
-  type Telefones = Awaited<ReturnType<typeof enrichPhones>>;
-  const [telefones, setTelefones] = useState<Telefones | null>((sess0.telefones as Telefones | null) ?? null);
-  const [loadingFones, setLoadingFones] = useState(false);
-
-
-  const runLookup = useServerFn(lookupCnpj);
-  const runGenerate = useServerFn(generateWithAI);
-  const runExtractContactName = useServerFn(extractContactNameWithAI);
-  const runSearchNome = useServerFn(searchCompanyByName);
-  const runEnrichPhones = useServerFn(enrichPhones);
-
-  async function extrairNomeContatoComIA(textoBruto: string): Promise<string> {
-    const { nome } = await runExtractContactName({ data: { textoBruto } });
-    return nome?.trim() || "tudo bem?";
-  }
-
-
-  // ---- Caches em memória ----
-  type LookupResult = Awaited<ReturnType<typeof lookupCnpj>>;
-  const lookupCache = useRef<Map<string, LookupResult>>(new Map());
-  const phonesCache = useRef<Map<string, Telefones>>(new Map());
-  const aiCache = useRef<Map<string, string>>(new Map());
-
-  // Normaliza nomes de empresa para comparação (sem acentos, sem sufixos societários).
-  function normalizarNomeEmpresa(v: string) {
-    return v
+// Marca como "realizada" (LIGADO) todas as empresas da Preparação Noturna
+// compatíveis com o CNPJ/nome informados, em qualquer data do consultor atual.
+// Usado pela Pós-ligação para dar baixa automática mesmo quando a ligação
+// não começou pelo botão "Enviar ao pré-ligação".
+export function markPreparacaoRealizadaByCompany(
+  cnpj?: string | null,
+  nome?: string | null,
+  outcome: "realizada" | "sem_interesse" = "realizada",
+): number {
+  if (typeof window === "undefined") return 0;
+  const cnpjDigits = (cnpj ?? "").replace(/\D/g, "");
+  const normalize = (v: string) =>
+    v
+      .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/\b(ltda|me|epp|eireli|s\/?a|sa|cia|comercio|industria|do|da|de|e)\b/g, " ")
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
-  }
-
-
-
-
-  async function handleLookup(preset?: string) {
-    // Lê o valor atual do input (fallback caso o estado ainda não tenha atualizado),
-    // aceita qualquer formato: 12.345.678/0001-90, 12345678000190, com espaços, etc.
-    let raw: string;
-    if (preset !== undefined) {
-      raw = preset;
-    } else {
-      const inputEl = document.getElementById("cnpj") as HTMLInputElement | null;
-      raw = (inputEl?.value ?? cnpj ?? "").toString();
+      .replace(/\b(ltda|s\/a|sa|me|epp|eireli|mei|industria|comercio|e)\b/g, "")
+      .replace(/[^a-z0-9]/g, "");
+  const target = normalize(nome ?? "");
+  const prefix = `bhm-preparacao::`;
+  const suffix = `::${consultorSlug()}`;
+  let changed = 0;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.startsWith(prefix) && k.endsWith(suffix)) keys.push(k);
     }
-    const digits = raw.replace(/[^\d]/g, "");
-    if (digits.length === 0) {
-      toast.error("Cole ou digite o CNPJ no campo antes de buscar");
-      return;
-    }
-    if (digits.length !== 14) {
-      toast.error(`CNPJ deve ter 14 dígitos (você informou ${digits.length})`);
-      return;
-    }
-    // Sincroniza o campo com o valor limpo
-    setCnpj(digits);
-    setLoadingCnpj(true);
-    setTelefones(null);
-    // ===== SANDBOX: Empresa Parâmetro de Teste (Metalúrgica fictícia) =====
-    // Intercepta o fluxo antes de chamar a BrasilAPI para permitir testes de
-    // ponta a ponta (script, pós-ligação, payload) sem consumir créditos.
-    if (digits === "00000000000100") {
-      const dossie = [
-        "CNPJ: 00.000.000/0001-00 (Matriz)",
-        "Razão social: METALÚRGICA PARANÁ LTDA",
-        "Nome fantasia: MetalMax Indústria",
-        "Situação cadastral: ATIVA",
-        "Data de abertura: 15/03/2012",
-        "Porte: GRANDE",
-        "Capital social: R$ 12.500.000,00",
-        "Atividade principal (CNAE): 25.39-0-01 - Serviços de usinagem, tornearia e solda",
-        "Endereço: Av. das Indústrias, 1500 · Distrito Industrial · Curitiba/PR · CEP 81000-000",
-        "Telefone: (41) 3344-5566 / (41) 99988-7766",
-        "E-mail: controladoria@metalurgicaparana.com.br",
-        "Quadro societário:",
-        "- Roberto Silveira (Sócio-Administrador) · desde 2012",
-        "- Carlos Eduardo Santos (Sócio) · desde 2015",
-      ].join("\n");
-      setEmpresaResumo("METALÚRGICA PARANÁ LTDA · Nome Fantasia: MetalMax · Porte: Grande Empresa");
-      if (!dadosDirtyRef.current) {
-        setDados(dossie);
-      } else {
-        toast.info("Mantendo suas edições no campo 'Dados da empresa' (sandbox não sobrescreveu).");
-      }
-      setScript("");
-      setContingenciaAtiva(false);
-      setLoadingCnpj(false);
-      toast.success("Empresa de teste injetada (sandbox — sem chamada real)");
-      return;
-    }
-    try {
-      let r = lookupCache.current.get(digits);
-      if (!r) {
-        r = await runLookup({ data: { cnpj: digits } });
-        lookupCache.current.set(digits, r);
-      }
-      const socios = r.socios
-        .map((s) =>
-          `- ${s.nome} (${s.qualificacao})` +
-          (s.dataEntrada ? ` · desde ${s.dataEntrada}` : "") +
-          (s.faixaEtaria ? ` · ${s.faixaEtaria}` : ""),
-        )
-        .join("\n");
-      const cnaesSec = r.cnaesSecundarios.length
-        ? r.cnaesSecundarios.map((c) => `  · ${c}`).join("\n")
-        : "";
-      const bloco = [
-        `CNPJ: ${r.cnpj}${r.matrizFilial ? " (" + r.matrizFilial + ")" : ""}`,
-        `Razão social: ${r.razaoSocial}`,
-        r.nomeFantasia && `Nome fantasia: ${r.nomeFantasia}`,
-        r.situacao &&
-          `Situação cadastral: ${r.situacao}${r.dataSituacao ? " (" + r.dataSituacao + ")" : ""}`,
-        r.dataAbertura && `Data de abertura: ${r.dataAbertura}`,
-        r.naturezaJuridica && `Natureza jurídica: ${r.naturezaJuridica}`,
-        r.porte &&
-          `Porte: ${r.porte}` +
-            (r.simples ? ` · Simples${r.dataSimples ? " desde " + r.dataSimples : ""}` : "") +
-            (r.mei ? ` · MEI${r.dataMei ? " desde " + r.dataMei : ""}` : ""),
-        r.capitalSocial && `Capital social: ${r.capitalSocial}`,
-        r.cnaePrincipal && `Atividade principal (CNAE): ${r.cnaePrincipal}`,
-        cnaesSec && `Atividades secundárias:\n${cnaesSec}`,
-        r.endereco && `Endereço: ${r.endereco}`,
-        (r.telefone1 || r.telefone2) &&
-          `Telefone: ${[r.telefone1, r.telefone2].filter(Boolean).join(" / ")}`,
-        r.email && `E-mail: ${r.email}`,
-        r.enteFederativo && `Ente federativo: ${r.enteFederativo}`,
-        socios && `Quadro societário:\n${socios}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-      if (!dadosDirtyRef.current) {
-        setDados(bloco);
-      } else {
-        toast.info("Mantendo suas edições no campo 'Dados da empresa' (busca automática não sobrescreveu).");
-      }
-      setScript("");
-      setEmpresaResumo(
-        `${r.razaoSocial || "Empresa"}${r.nomeFantasia ? " · " + r.nomeFantasia : ""}${r.porte ? " · " + r.porte : ""}`,
-      );
-      setResultados([]);
-
-      // Alimenta o estado do lead ativo para o Modo Esteira (compilação local sem IA)
-      const cidade = (r.endereco ?? "").split("·").find((e) => e.includes("/"))?.trim()?.split("/")[0]?.trim() ?? "";
-      const uf = (r.endereco ?? "").split("·").find((e) => e.includes("/"))?.trim()?.split("/")[1]?.trim() ?? "";
-      const leadAtual = {
-        cnpj: digits,
-        razaoSocial: r.razaoSocial,
-        nomeFantasia: r.nomeFantasia || r.razaoSocial,
-        cnaePrincipal: r.cnaePrincipal,
-        cidade,
-        uf,
-        endereco: r.endereco,
-      };
-      setCurrentLeadState(leadAtual);
-      // Espelha o lead ativo em sessionStorage para que a aba Pós-ligação
-      // consiga usar os dados estruturados no registro de atividades.
-      setActiveLead(leadAtual);
-
-      setContingenciaAtiva(false);
-      toast.success("Dados carregados. Ajuste o prompt se quiser e depois processe o script.");
-
-
-      // Se já enriquecemos telefones para este CNPJ nesta sessão, restaura do cache.
-      const cachedPhones = phonesCache.current.get(digits);
-      if (cachedPhones) setTelefones(cachedPhones);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err ?? "");
-      // Detecta falhas típicas das bases públicas (rate limit, bloqueio ou queda)
-      // ou erros de rede/timeout — nesses casos entra em Modo Manual de Contingência
-      // em vez de limpar os campos já preenchidos pelo operador.
-      const instavel = /\b(429|403|500|502|503|504)\b/.test(msg)
-        || /rate.?limit|too many|timeout|network|fetch|failed to fetch|econnreset|enotfound/i.test(msg);
-      if (instavel) {
-        setContingenciaAtiva(true);
-        toast.warning(
-          "Bases públicas instáveis. O Modo Manual de Contingência foi ativado automaticamente.",
-          { description: "Cole os dados da empresa direto no campo abaixo e siga com a ligação." },
-        );
-        // Foca a Textarea para acelerar o preenchimento manual
-        setTimeout(() => {
-          const ta = document.getElementById("dados") as HTMLTextAreaElement | null;
-          ta?.focus();
-        }, 50);
-      } else {
-        setEmpresaResumo(null);
-        toast.error(msg || "Falha ao buscar CNPJ");
-      }
-    } finally {
-      setLoadingCnpj(false);
-    }
-  }
-
-  async function handleEnrichPhones() {
-    const digits = cnpj.replace(/\D/g, "");
-    if (digits.length !== 14) {
-      toast.error("Busque um CNPJ válido antes de enriquecer telefones");
-      return;
-    }
-    const cached = phonesCache.current.get(digits);
-    if (cached) {
-      setTelefones(cached);
-      toast.info("Telefones carregados do cache (sem gastar créditos)");
-      return;
-    }
-    setLoadingFones(true);
-    try {
-      const res = await runEnrichPhones({ data: { cnpj: digits } });
-      phonesCache.current.set(digits, res);
-      setTelefones(res);
-      updateSessaoAtiva({ telefones: res });
-
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao buscar telefones");
-    } finally {
-      setLoadingFones(false);
-    }
-  }
-
-
-  async function handleBuscaNome() {
-    const termo = nomeBusca.trim();
-    if (termo.length < 3) {
-      toast.error("Digite ao menos 3 caracteres do nome / razão social");
-      return;
-    }
-    // Se o usuário colou um CNPJ aqui, faz o lookup direto
-    const digits = termo.replace(/\D/g, "");
-    if (digits.length === 14) {
-      setSearchMode("cnpj");
-      setCnpj(digits);
-      await handleLookup(digits);
-      return;
-    }
-    setLoadingBusca(true);
-    setResultados([]);
-    try {
-      const r = await runSearchNome({ data: { nome: termo } });
-      if (r.itens.length === 0) {
-        toast.warning("Nenhuma empresa encontrada com esse nome");
-        return;
-      }
-      // Se só veio 1 resultado, já carrega os dados completos automaticamente
-      if (r.itens.length === 1) {
-        const unico = r.itens[0];
-        setSearchMode("cnpj");
-        setCnpj(unico.cnpj);
-        await handleLookup(unico.cnpj);
-        return;
-      }
-      setResultados(r.itens);
-      toast.success(`${r.itens.length} resultado(s) — clique numa empresa para carregar todos os dados`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha na busca por nome");
-    } finally {
-      setLoadingBusca(false);
-    }
-  }
-
-  async function handleGenerate() {
-    if (!dados.trim()) {
-      toast.error("Cole ou busque os dados da empresa primeiro");
-      return;
-    }
-    if (!promptText.trim()) {
-      toast.error(
-        "Nenhum prompt de abordagem ativo. Abra 'Biblioteca de prompts' e selecione ou crie um.",
-      );
-      return;
-    }
-    setLoadingGen(true);
-    setScript("");
-    try {
-      const parsedLead = parseLeadFromDados(dados, cnpj);
-      const leadBase = parsedLead ?? currentLeadState ?? montarLeadFallback(dados, cnpj, empresaResumo);
-      const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
-      const lead = { ...leadBase, contatoNome: nomeContatoIA };
-      setCurrentLeadState(lead);
-      setActiveLead(lead);
-      const hydratedPromptText = preencherTagsDoScript(promptText, lead, dados.trim(), nomeContatoIA);
-      const diaSemana = new Date().toLocaleDateString("pt-BR", { weekday: "long" });
-      const valoresValidados = inferirSegmentoPorCnae(`${lead.cnaePrincipal ?? ""}\n${dados.trim()}`);
-      const nomeValidado = nomeContatoIA;
-      const cidadeValidada = lead.cidade?.trim() || "aí na região";
-      const cidadeEstadoValidada = lead.cidade && lead.uf ? `${lead.cidade}/${lead.uf}` : cidadeValidada;
-
-      // 1. systemInstruction: papel + regras rígidas de extração/substituição
-      const systemInstruction = `Você é um extrator de dados CIRÚRGICO da BHM Advogados. Sua única função é ler os dados do lead e preencher o template. É ESTRITAMENTE PROIBIDO INVENTAR informações ou alucinar.
-
-PRIORIDADE ABSOLUTA: se o bloco [VALORES VALIDADOS PELO SISTEMA] existir, use esses valores como fonte final para {NOME}, {SEGMENTO}, {INSUMOS}, {CIDADE} e {CIDADE_ESTADO}. Não reinterpretar esses campos.
-
-REGRAS DE EXTRAÇÃO E PREENCHIMENTO:
-
-1. {NOME} — TRAVA ANTI-ALUCINAÇÃO:
-   - Deve ser ÚNICA E EXCLUSIVAMENTE um NOME HUMANO PRÓPRIO (ex: Rafaela, Aline, Walter, Ezio, Mateus, Felipe).
-   - 🛑 EXPRESSAMENTE PROIBIDO usar títulos de layout, seções, verbos ou substantivos comuns como: "Inscrições", "Sócios", "Atividades", "Fabricação", "Comércio", "Estruturas", "Metálicas", "Administrador", "Administradores", "Empresa", "Contatos", "Quadro", "Societário", "Fiscal", "Financeiro", "Estaduais", "SUFRAMA", "CNAE", "LTDA", "SA", "ME", "EPP", "HOLDING".
-   - 🛑 PROIBIDO usar Razão Social, nome fantasia ou qualquer nome corporativo (FLORENSE, BARBIERI, BHM etc.).
-   - HIERARQUIA RÍGIDA:
-     1º) Nome humano próprio de pessoa em cargo Financeiro / Fiscal / Contábil / Controladoria / Administrativo (ex: "Rafaela Bueno - Assistente Financeiro" → "Rafaela").
-     2º) Nome humano próprio de Administrador / Sócio pessoa física (ignorar sócios PJ).
-     3º) Se NÃO existir NENHUM humano identificável, use literalmente: "tudo bem?".
-   - Sempre use apenas o PRIMEIRO NOME com inicial maiúscula.
-
-2. {SEGMENTO} e {INSUMOS} — TRAVA ANTI-ALUCINAÇÃO DE SETOR:
-   - Leia OBRIGATORIAMENTE a seção de CNAE / Atividades Econômicas / Atividade Principal.
-   - 🛑 JAMAIS invente setor. Se a atividade principal for de metal/aço/ferro/estruturas metálicas, NUNCA use Têxtil, Alimentos, Madeira etc.
-   - Mapeamento OBRIGATÓRIO por CNAE/descrição:
-     * CNAE 25xx ou descrição contendo "metálic", "metalurgia", "aço", "ferro", "estruturas metálicas", "usinagem", "solda", "caldeiraria" → {SEGMENTO} = "Metalurgia e Metalmecânica" | {INSUMOS} = "eletrodos de solda, discos de corte abrasivos e rebolos de desbaste"
-     * CNAE 31xx ou descrição contendo "móveis", "madeira", "marcenaria", "MDF" → {SEGMENTO} = "Móveis e Artefatos de Madeira" | {INSUMOS} = "lixas industriais, brocas de vídea e colas estruturais"
-     * CNAE 10xx/11xx ou descrição contendo "alimento", "laticínio", "frigorífic", "bebida" → {SEGMENTO} = "Alimentos e Refrigeração" | {INSUMOS} = "fluidos hidráulicos protetivos, amônia para refrigeração e esteiras de lavagem"
-     * CNAE 22xx ou descrição contendo "plástic", "polímer", "borracha" → {SEGMENTO} = "Plásticos e Transformação" | {INSUMOS} = "resinas termoplásticas, moldes de injeção e aditivos de processo"
-   - Se o CNAE não se encaixar nas categorias acima, use um segmento GENÉRICO derivado literalmente da descrição do CNAE principal (ex: "Comércio atacadista"). NUNCA invente insumos que não pertençam ao setor real.
-
-3. {CIDADE} e {CIDADE_ESTADO}: Extraia o Município e a UF do endereço (ex: "Almirante Tamandaré" e "Almirante Tamandaré/PR"). Se ausente, use "aí na região".
-
-É TERMINANTEMENTE PROIBIDO manter chaves { } ou colchetes [ ] na resposta final. Retorne APENAS o diálogo do script totalmente preenchido.`;
-
-
-      // 2. userContent: dados do lead + template a ser preenchido
-      const userContent = `[DADOS DO LEAD]:
-${dados.trim()}
-
-[VALORES VALIDADOS PELO SISTEMA — USE SEM REINTERPRETAR]:
-{NOME}: ${nomeValidado}
-{SEGMENTO}: ${valoresValidados.segmento}
-{INSUMOS}: ${valoresValidados.insumos}
-{CIDADE}: ${cidadeValidada}
-{CIDADE_ESTADO}: ${cidadeEstadoValidada}
-
-[DIA DA SEMANA ATUAL]:
-${diaSemana}
-
-[TEMPLATE DO SCRIPT PARA VOCÊ PREENCHER E RETORNAR]:
-${hydratedPromptText}
-
-COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o script de Cold Call substituindo TODAS as tags {NOME}, {SEGMENTO}, {CIDADE}, {CIDADE_ESTADO} e {INSUMOS} pelos dados reais extraídos. É proibido retornar chaves { } no texto.`;
-
-      const cacheKey = `${systemInstruction}\u0000${userContent}`;
-      const cached = aiCache.current.get(cacheKey);
-      if (cached) {
-        setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
-        setScriptOpen(true);
-        void autoIniciarGravacao();
-        toast.info("Script recuperado do cache (sem gastar créditos de IA)");
-        return;
-      }
-
-      const { text } = await runGenerate({
-        data: { systemPrompt: systemInstruction, userContent, modo: "script" as const },
+    for (const k of keys) {
+      const raw = window.localStorage.getItem(k);
+      if (!raw) continue;
+      let arr: Empresa[] = [];
+      try { arr = JSON.parse(raw) as Empresa[]; } catch { continue; }
+      if (!Array.isArray(arr)) continue;
+      let dirty = false;
+      const next = arr.map((e) => {
+        if (e.status === outcome) return e;
+        const eCnpj = (e.cnpj ?? "").replace(/\D/g, "");
+        const byCnpj = cnpjDigits.length >= 8 && eCnpj.length >= 8 && eCnpj === cnpjDigits;
+        const eNorm = normalize(e.nome || e.razaoSocial || "");
+        const byName =
+          !byCnpj &&
+          target.length >= 4 &&
+          eNorm.length >= 4 &&
+          (eNorm === target || eNorm.includes(target) || target.includes(eNorm));
+        if (!byCnpj && !byName) return e;
+        dirty = true;
+        changed++;
+        return { ...e, status: outcome, ligadoEm: new Date().toISOString() };
       });
-      const enforcedText = extractFinalScriptOnly(
-        preencherTagsDoScript(text, lead, dados.trim(), nomeContatoIA),
-      );
-      const finalText = contemAlucinacaoDeExtracao(enforcedText, lead, dados.trim(), nomeContatoIA)
-        ? compileScriptLocally(promptText, lead, dados.trim(), nomeContatoIA)
-        : enforcedText;
-      aiCache.current.set(cacheKey, finalText);
-
-      setScript(finalText);
-      setScriptOpen(true);
-      void autoIniciarGravacao();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha na IA");
-    } finally {
-      setLoadingGen(false);
+      if (dirty) window.localStorage.setItem(k, JSON.stringify(next));
     }
+  } catch { /* noop */ }
+  if (changed > 0) {
+    window.dispatchEvent(
+      new CustomEvent(PREPARACAO_REALIZADA_EVENT, { detail: { byCompany: true, outcome } }),
+    );
   }
+  return changed;
+}
 
-  // Gravação 100% automática: começa junto com o script compilado. O VAD
-  // descarta sozinho a tentativa se nenhuma fala for detectada em 45s
-  // (discagem sem atendimento) — sem nenhum clique do operador.
-  async function autoIniciarGravacao() {
-    if (isRecording()) return;
-    const nome =
-      currentLeadState?.razaoSocial ||
-      currentLeadState?.nomeFantasia ||
-      empresaResumo?.split("·")[0]?.trim() ||
-      "";
-    try {
-      await startCallRecording({ vadTimeoutMs: 45_000 });
-      if (!getRunningTimer()) startTimer(nome || "Empresa", currentLeadState?.cnpj ?? cnpj ?? null);
-    } catch {
-      /* microfone indisponível: segue com a transcrição manual como fonte */
-    }
-  }
+const EXTRACT_SYSTEM_PROMPT =
+  "Você recebe um texto bruto com anotações de prospecção B2B. Extraia APENAS o nome/razão social da empresa mencionada. Responda somente com o nome (máx 40 caracteres), sem aspas, sem prefixos, sem explicações. Se não conseguir identificar, responda EXATAMENTE: DESCONHECIDA.";
 
+export function PreparacaoNoturna({ variant = "compact" }: { variant?: "compact" | "full" }) {
+  const [hydrated, setHydrated] = useState(false);
+  const [date, setDate] = useState<string>(todayISO());
+  const [list, setList] = useState<Empresa[]>([]);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftText, setDraftText] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importando, setImportando] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingEmpresa, setEditingEmpresa] = useState<Empresa | null>(null);
+  const [aba, setAba] = useState<"ativas" | "sem_interesse">("ativas");
+  const [selecionados, setSelecionados] = useState<string[]>([]);
+  const [bulkDate, setBulkDate] = useState<string>("");
+  const [bulkPasta, setBulkPasta] = useState<string>("");
+  const [bulkMode, setBulkMode] = useState<"copiar" | "mover">("copiar");
+  const [pastas, setPastas] = useState<PastaPreparacao[]>([]);
+  // Incrementado sempre que uma ação pode ter mudado a quantidade de empresas
+  // dentro de alguma pasta SEM mexer na lista da data/pasta ativa agora (ex.:
+  // copiar empresas selecionadas para outra pasta). Serve só para invalidar
+  // o cache de contagem por pasta (contagemPorPasta) de forma controlada.
+  const [pastaCountsVersion, setPastaCountsVersion] = useState(0);
+  const [pastaDialog, setPastaDialog] = useState<{ id?: string; nome: string } | null>(null);
+  const [grupoEscolha, setGrupoEscolha] = useState<{ origem: Empresa; unidades: Empresa[] } | null>(
+    null,
+  );
+  const [seletorOpen, setSeletorOpen] = useState(false);
+  // Controla se a barra de ações em lote (copiar/mover selecionadas) está
+  // expandida. Fica recolhida por padrão para não poluir a tela — só mostra
+  // os controles completos quando o usuário pede.
+  const [barraLoteAberta, setBarraLoteAberta] = useState(false);
+  // Abre a barra de ações em lote sozinha assim que a primeira empresa é
+  // selecionada — evita que o consultor marque um checkbox e não perceba
+  // que existe uma ação disponível lá em cima. Só reage na TRANSIÇÃO de
+  // 0 para >0 selecionadas; se o consultor recolher manualmente depois,
+  // não força reabrir a cada novo checkbox marcado.
+  const selecionadosAnterioresRef = useRef(0);
+  const [filtroBusca, setFiltroBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"" | EmpresaStatus>("");
+  const [filtroUf, setFiltroUf] = useState("");
+  const [filtroSetor, setFiltroSetor] = useState("");
+  const [filtroRegime, setFiltroRegime] = useState("");
+  const [filtroEtapa, setFiltroEtapa] = useState<"" | EtapaPipeline>("");
+  const [enriquecendo, setEnriquecendo] = useState(false);
+  const [progressoEnriquecimento, setProgressoEnriquecimento] = useState<string | null>(null);
+  const runGenerate = useServerFn(generateWithAI);
+  const runConsultarCnpj = useServerFn(consultarCnpj);
+  const navigate = useNavigate();
 
+  const pastaAtual = useMemo(
+    () => (isPastaBucket(date) ? pastas.find((p) => `pasta:${p.id}` === date) ?? null : null),
+    [date, pastas],
+  );
 
-
-  async function handleProcessScript() {
-    if (modoEsteira) {
-      // Fallback do Modo Manual de Contingência: se a API pública falhou (ou
-      // ainda não rodou) e o operador colou os dados brutos direto na Textarea,
-      // extrai o lead do próprio texto para continuar a compilação local.
-      let lead = parseLeadFromDados(dados, cnpj) ?? currentLeadState;
-      if (!lead && dados.trim()) {
-        lead = montarLeadFallback(dados, cnpj, empresaResumo);
-        setCurrentLeadState(lead);
-        setActiveLead(lead);
-      }
-      if (lead) {
-        setCurrentLeadState(lead);
-        setActiveLead(lead);
-      }
-      if (!lead) {
-        toast.error("Cole os dados da empresa no campo abaixo antes de compilar.");
-        return;
-      }
-
-      setLoadingGen(true);
-      try {
-        const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
-        const leadComContato = { ...lead, contatoNome: nomeContatoIA };
-        setCurrentLeadState(leadComContato);
-        setActiveLead(leadComContato);
-        const compiled = compileScriptLocally(promptText, leadComContato, dados.trim(), nomeContatoIA);
-        setScript(compiled);
-        void autoIniciarGravacao();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Falha ao extrair contato");
-        return;
-      } finally {
-        setLoadingGen(false);
-      }
-      setScriptOpen(true);
-      toast.success(
-        currentLeadState
-          ? "Script compilado com contato extraído por IA."
-          : "Script compilado a partir dos dados manuais com contato extraído por IA.",
-      );
-      return;
-    }
-    void handleGenerate();
-  }
-
-
-  async function copyScript() {
-    if (!script.trim()) {
-      toast.error("Nenhum script gerado ainda");
-      return;
-    }
-    await navigator.clipboard.writeText(script);
-    toast.success("Script copiado");
-  }
-
-  // Alt+S: copia o script de abordagem sem sair do fluxo de discagem.
-  useHotkey({ key: "s", alt: true, allowInField: true }, () => {
-    void copyScript();
-  });
-
-
-  function downloadScript() {
-    const nome = (empresaResumo?.split("·")[0] ?? "script").trim().replace(/[^\w\s-]/g, "").replace(/\s+/g, "_") || "script";
-    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-    const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${nome}_${stamp}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast.success("Download iniciado");
-  }
-
-  // Barramento reativo: quando um card de follow-up (ou qualquer painel) dispara
-  // um novo lead ativo via setActiveLead(...), injetamos o CNPJ e rodamos o
-  // lookup automaticamente — dossiê + script em custo zero.
-  const lookupRef = useRef(handleLookup);
-  lookupRef.current = handleLookup;
   useEffect(() => {
-    const onLead = () => {
-      const lead = getActiveLead();
-      const digits = (lead?.cnpj ?? "").replace(/\D/g, "");
-      if (digits.length !== 14) return;
-      // Só refaz se for um CNPJ diferente do atual (evita loop de auto-refresh)
-      if (digits === (cnpj || "").replace(/\D/g, "")) return;
-      // Se o operador já editou manualmente o campo "Dados da empresa",
-      // NÃO dispara um novo lookup que sobrescreveria as edições.
-      if (dadosDirtyRef.current) return;
-      setSearchMode("cnpj");
-      setCnpj(digits);
-      // Aguarda o próximo tick para que o input reflita o valor antes do lookup
-      setTimeout(() => {
-        void lookupRef.current(digits);
-      }, 0);
+    const activeDate = loadActiveDate();
+    setPastas(loadPastas());
+    setDate(activeDate);
+    setList(load(activeDate));
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    saveActiveDate(date);
+    setList(load(date));
+    setSelecionados([]);
+  }, [date, hydrated]);
+
+
+  useEffect(() => {
+    function onSession() {
+      const activeDate = loadActiveDate();
+      setPastas(loadPastas());
+      setDate(activeDate);
+      setList(load(activeDate));
+    }
+    window.addEventListener("bhm:session-changed", onSession);
+    return () => window.removeEventListener("bhm:session-changed", onSession);
+  }, []);
+
+  useEffect(() => {
+    if (selecionadosAnterioresRef.current === 0 && selecionados.length > 0) {
+      setBarraLoteAberta(true);
+    }
+    selecionadosAnterioresRef.current = selecionados.length;
+  }, [selecionados.length]);
+
+  /** Cria ou renomeia uma pasta (carteira) de empresas. */
+  function salvarPasta() {
+    const nome = (pastaDialog?.nome ?? "").trim();
+    if (!nome) {
+      toast.error("Dê um nome para a pasta.");
+      return;
+    }
+    if (pastaDialog?.id) {
+      const next = pastas.map((p) => (p.id === pastaDialog.id ? { ...p, nome } : p));
+      setPastas(next);
+      savePastas(next);
+      toast.success("Pasta renomeada");
+    } else {
+      const nova: PastaPreparacao = { id: newId(), nome };
+      unmarkPastaDeleted(nova.id);
+      const next = [...pastas, nova];
+      setPastas(next);
+      savePastas(next);
+      setDate(`pasta:${nova.id}`);
+      toast.success(`Pasta criada: ${nome}`);
+    }
+    setPastaDialog(null);
+  }
+
+  /** Remove a pasta e as empresas guardadas dentro dela. */
+  function excluirPasta(id: string) {
+    const alvo = pastas.find((p) => p.id === id);
+    if (!alvo) return;
+    const qtd = load(`pasta:${id}`).length;
+    if (!window.confirm(`Excluir a pasta "${alvo.nome}"${qtd ? ` e as ${qtd} empresas dentro dela` : ""}?`)) return;
+    try {
+      // Remove a chave atual, os formatos por apelido e o legado sem dono.
+      const keys = new Set<string>([
+        storageKey(`pasta:${id}`),
+        `bhm-preparacao::pasta:${id}`,
+        ...preparationAliases().map((alias) => `bhm-preparacao::pasta:${id}::${alias}`),
+      ]);
+      keys.forEach((key) => window.localStorage.removeItem(key));
+      // Lápide: impede que o restaurador de backup traga a pasta de volta.
+      markPastaDeleted(id, consultorSlug());
+    } catch { /* noop */ }
+    const next = pastas.filter((p) => p.id !== id);
+    setPastas(next);
+    savePastas(next);
+    if (date === `pasta:${id}`) setDate(todayISO());
+    toast.success("Pasta excluída");
+  }
+
+  /** Reordena as pastas por arrastar-e-soltar (drag handle ⠿ em cada item). */
+  function onReorderPastas(ev: DragEndEvent) {
+    const activeId = String(ev.active.id);
+    const overId = ev.over ? String(ev.over.id) : null;
+    if (!overId || activeId === overId) return;
+    const ids = pastas.map((p) => p.id);
+    const from = ids.indexOf(activeId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(pastas, from, to);
+    setPastas(next);
+    savePastas(next);
+  }
+
+
+  const persist = useCallback(
+    (next: Empresa[], targetDate: string = date) => {
+      if (targetDate === date) setList(next);
+      save(targetDate, next);
+    },
+    [date],
+  );
+
+  async function extractNome(texto: string): Promise<string> {
+    try {
+      const r = await runGenerate({
+        data: {
+          systemPrompt: EXTRACT_SYSTEM_PROMPT,
+          userContent: texto.slice(0, 4000),
+        },
+      });
+      const raw = (r as { text?: string }).text?.trim() ?? "";
+      const clean = raw.replace(/^["'`]+|["'`]+$/g, "").slice(0, 40).trim();
+      if (clean && clean.toUpperCase() !== "DESCONHECIDA") return clean;
+    } catch {
+      /* noop */
+    }
+    const firstLine = texto.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? "Empresa";
+    return firstLine.slice(0, 40);
+  }
+
+  async function confirmarCadastro() {
+    const texto = draftText.trim();
+    if (!texto) {
+      toast.error("Cole ou digite os dados da empresa.");
+      return;
+    }
+    setSaving(true);
+    let nextList: Empresa[] | null = null;
+    let idParaEnriquecer: string | null = null;
+    try {
+      const dados = parseDadosCnpj(texto);
+      const nome = dados.razaoSocial || (await extractNome(texto));
+      const item: Empresa = {
+        id: newId(),
+        nome,
+        textoBruto: texto,
+        extraido: true,
+        status: "pending",
+        razaoSocial: dados.razaoSocial,
+        cnpj: dados.cnpj,
+        telefone: dados.telefone,
+        telefoneSecundario: dados.telefoneSecundario,
+        email: dados.email,
+        emailSecundario: dados.emailSecundario,
+        contato: dados.contato,
+        cargo: dados.cargo,
+        contatosExtras: (dados.contatosExtras ?? []).map((c) => ({
+          id: newId(),
+          nome: c.nome,
+          cargo: c.cargo,
+        })),
+        observacoes: dados.observacoes,
+        uf: dados.uf,
+        setor: dados.setor,
+        regime: dados.regime,
+      };
+
+      const digitos = cnpjDigitos(dados.cnpj);
+      const mesmoCnpj =
+        digitos.length === 14
+          ? list.find((e) => cnpjDigitos(e.cnpj) === digitos)
+          : undefined;
+
+      if (mesmoCnpj) {
+        // Mesma unidade já cadastrada: atualiza em vez de duplicar.
+        // UF/Setor/Regime nunca são sobrescritos aqui se já tiverem valor —
+        // só o "Enriquecer via CNPJ" ou edição manual mudam isso depois.
+        nextList = list.map((e) =>
+          e.id === mesmoCnpj.id
+            ? {
+                ...e,
+                ...item,
+                id: e.id,
+                status: e.status,
+                uf: e.uf || item.uf,
+                setor: e.setor || item.setor,
+                regime: e.regime || item.regime,
+              }
+            : e,
+        );
+        idParaEnriquecer = mesmoCnpj.id;
+        persist(nextList);
+        toast.success(`Unidade já cadastrada — dados atualizados: ${nome}`);
+      } else {
+        const raiz = cnpjRaiz(dados.cnpj);
+        const irmas = raiz ? list.filter((e) => cnpjRaiz(e.cnpj) === raiz) : [];
+        nextList = [...list, item];
+        idParaEnriquecer = item.id;
+        persist(nextList);
+        if (irmas.length > 0) {
+          toast.success(
+            `${unidadeLabel(dados.cnpj) ?? "Unidade"} unificada ao grupo ${nome} — ${irmas.length + 1} unidades. Você escolhe qual usar ao enviar ao Pré-ligação.`,
+          );
+        } else {
+          toast.success(`Cadastrada: ${nome}`);
+        }
+      }
+      setDraftText("");
+      setDraftOpen(false);
+    } finally {
+      setSaving(false);
+    }
+    // Enriquecimento automático via BrasilAPI, restrito só à empresa recém
+    // cadastrada/atualizada — não roda em background sobre o resto da lista
+    // nem trava o fechamento do diálogo. Silencioso: se não tiver CNPJ
+    // válido, simplesmente não faz nada (sem toast de "nada a enriquecer").
+    if (nextList && idParaEnriquecer) {
+      void enriquecerListaCnpjs(nextList, {
+        apenasIds: new Set([idParaEnriquecer]),
+        silencioso: true,
+      });
+    }
+  }
+
+
+  /** Exclui uma empresa da lista — pede confirmação, pois a ação não pode ser desfeita. */
+  function removeEmpresa(id: string) {
+    const alvo = list.find((e) => e.id === id);
+    const nome = alvo?.nome || "esta empresa";
+    if (!window.confirm(`Excluir "${nome}"? Essa ação não pode ser desfeita.`)) return;
+    persist(list.filter((e) => e.id !== id));
+    toast.success(`Excluída: ${nome}`);
+  }
+
+  function moveToDate(id: string, targetDate: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return;
+    if (targetDate === date) return;
+    const item = list.find((e) => e.id === id);
+    if (!item) return;
+    // Preserva o registro na data de origem — apenas cria uma cópia
+    // (novo id, status pendente) na data alvo. O histórico da data original
+    // permanece intacto para auditoria e relatórios.
+    const targetList = load(targetDate);
+    const clone: Empresa = { ...item, id: newId(), status: "pending" };
+    save(targetDate, [...targetList, clone]);
+    toast.success(`Reagendada para ${targetDate} — registro do dia ${date} preservado.`);
+  }
+
+  function toggleSelecionado(id: string) {
+    setSelecionados((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  /** Copia/move a seleção para outra data OU para uma pasta (carteira). */
+  function moverSelecionados() {
+    const target = bulkPasta || bulkDate;
+    if (!target) {
+      toast.error("Escolha a data ou a pasta de destino.");
+      return;
+    }
+    if (!isPastaBucket(target) && !/^\d{4}-\d{2}-\d{2}$/.test(target)) {
+      toast.error("Escolha a data de destino.");
+      return;
+    }
+    if (target === date) {
+      toast.error("O destino é o mesmo da lista atual.");
+      return;
+    }
+    const itens = list.filter((e) => selecionados.includes(e.id));
+    if (itens.length === 0) {
+      toast.error("Selecione ao menos uma empresa.");
+      return;
+    }
+    const targetList = load(target);
+    const existentes = new Set(
+      targetList.map((e) => (e.cnpj || e.nome).trim().toLowerCase()),
+    );
+    const clones = itens
+      .filter((e) => !existentes.has((e.cnpj || e.nome).trim().toLowerCase()))
+      .map((e) => ({ ...e, id: newId(), status: "pending" as EmpresaStatus }));
+    save(target, [...targetList, ...clones]);
+    if (bulkMode === "mover") {
+      persist(list.filter((e) => !selecionados.includes(e.id)));
+    }
+    // O destino pode ser uma pasta que não é a data/pasta ativa agora — o
+    // `list` do estado não reflete isso sozinho, então avisamos a contagem
+    // por pasta pra recalcular.
+    setPastaCountsVersion((v) => v + 1);
+    setSelecionados([]);
+    const dup = itens.length - clones.length;
+    const destinoLabel = isPastaBucket(target)
+      ? `pasta "${pastas.find((p) => `pasta:${p.id}` === target)?.nome ?? "?"}"`
+      : target;
+    toast.success(
+      `${clones.length} empresa(s) ${bulkMode === "mover" ? "movida(s)" : "copiada(s)"} para ${destinoLabel}` +
+        (dup > 0 ? ` · ${dup} já existia(m) no destino` : ""),
+    );
+  }
+
+
+  // Agrupa as empresas por raiz de CNPJ uma única vez por lista. Antes, cada
+  // linha renderizada rodava um filter() na lista inteira só pra descobrir se
+  // fazia parte de um grupo matriz/filiais — com listas grandes isso deixava
+  // a tela mais lenta. Agora é um Map calculado uma vez por mudança de lista.
+  const gruposPorRaizCnpj = useMemo(() => {
+    const map = new Map<string, Empresa[]>();
+    for (const e of list) {
+      const raiz = cnpjRaiz(e.cnpj);
+      if (!raiz) continue;
+      const arr = map.get(raiz);
+      if (arr) arr.push(e);
+      else map.set(raiz, [e]);
+    }
+    for (const arr of map.values()) {
+      if (arr.length > 1) arr.sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""));
+    }
+    return map;
+  }, [list]);
+
+  function unidadesDoGrupo(item: Empresa): Empresa[] {
+    const raiz = cnpjRaiz(item.cnpj);
+    if (!raiz) return [item];
+    const grupo = gruposPorRaizCnpj.get(raiz);
+    return grupo && grupo.length > 1 ? grupo : [item];
+  }
+
+  /** Antes de injetar no Pré, se a empresa tiver matriz + filiais, pergunta qual unidade usar. */
+  function enviarParaPre(item: Empresa) {
+    const unidades = unidadesDoGrupo(item);
+    if (unidades.length > 1) {
+      setGrupoEscolha({ origem: item, unidades });
+      return;
+    }
+    injetarNoPre(item);
+  }
+
+  function injetarNoPre(item: Empresa) {
+    if (typeof window === "undefined") return;
+    const payload = {
+      nome: item.nome,
+      textoBruto: item.textoBruto,
+      preparationId: item.id,
+      razaoSocial: item.razaoSocial ?? "",
+      cnpj: item.cnpj ?? "",
+      contato: item.contato ?? "",
+      cargo: item.cargo ?? "",
+      telefone: item.telefone ?? "",
+      email: item.email ?? "",
+      observacoes: item.observacoes ?? "",
     };
-    window.addEventListener(ACTIVE_LEAD_EVENT, onLead);
-    return () => window.removeEventListener(ACTIVE_LEAD_EVENT, onLead);
-  }, [cnpj]);
+    try {
+      window.sessionStorage.setItem(ACTIVE_PREPARATION_ID_KEY, item.id);
+    } catch { /* noop */ }
 
-  return (
+    if (variant === "full") {
+      // Handoff via sessionStorage; PreLigacao consome no mount ao chegar em /?tab=pre
+      try {
+        window.sessionStorage.setItem(PENDING_PRE_LIGACAO_KEY, JSON.stringify(payload));
+      } catch { /* noop */ }
+      toast.success(`Carregando no Pré-ligação: ${item.nome}`);
+      navigate({ to: "/", search: { tab: "pre" } });
+      return;
+    }
 
-    <Card className="relative overflow-hidden border-border bg-card p-0 shadow-sm">
-      <CardHeader className="flex flex-col gap-2 space-y-0 rounded-none border-b border-navy-deep bg-navy-deep px-4 py-3.5 text-white sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
-        <CardTitle className="font-display text-base tracking-wide text-white sm:text-lg">
-          Pré-ligação · Script de abordagem
-        </CardTitle>
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-white/80 hover:bg-white/10 hover:text-white"
-              >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Limpar tudo
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Limpar tudo?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Isso vai apagar o CNPJ, os dados da empresa, o script gerado e o lead ativo desta tela para começar uma nova prospecção do zero. Essa ação não pode ser desfeita.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <AlertDialogAction onClick={limparTudo}>Limpar tudo</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+    window.dispatchEvent(
+      new CustomEvent(LOAD_PRE_LIGACAO_EVENT, { detail: payload }),
+    );
+    toast.success(`Carregado no Pré-ligação: ${item.nome}`);
+  }
+
+  useEffect(() => {
+    function onRealizada(ev: Event) {
+      const detail = (ev as CustomEvent<{
+        preparationId?: string;
+        byCompany?: boolean;
+        outcome?: "realizada" | "sem_interesse";
+      }>).detail;
+      const id = detail?.preparationId;
+      const outcome: EmpresaStatus = detail?.outcome === "sem_interesse" ? "sem_interesse" : "realizada";
+      if (!id) {
+        // Baixa por empresa: o storage já foi atualizado, só recarrega.
+        setList(load(date));
+        return;
+      }
+      const current = load(date);
+      if (!current.some((e) => e.id === id)) return;
+      const next = current.map((e) =>
+        e.id === id ? { ...e, status: outcome, ligadoEm: new Date().toISOString() } : e,
+      );
+      persist(next);
+    }
+    window.addEventListener(PREPARACAO_REALIZADA_EVENT, onRealizada as EventListener);
+    // Ao voltar para a aba, ressincroniza (caso a baixa tenha ocorrido em outra tela).
+    function onFocus() { setList(load(date)); }
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener(PREPARACAO_REALIZADA_EVENT, onRealizada as EventListener);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [date, persist]);
+
+  function saveEmpresaEdits(patch: Empresa) {
+    const next = list.map((e) => (e.id === patch.id ? { ...e, ...patch } : e));
+    persist(next);
+    setEditingEmpresa(null);
+    toast.success("Dados atualizados");
+  }
+
+  const ativas = useMemo(
+    () =>
+      [...list]
+        .filter((e) => e.status !== "sem_interesse")
+        .sort((a, b) => Number(a.status === "realizada") - Number(b.status === "realizada")),
+    [list],
+  );
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+  const semInteresse = useMemo(() => list.filter((e) => e.status === "sem_interesse"), [list]);
+  const empresasOrdenadas = aba === "sem_interesse" ? semInteresse : ativas;
+
+  const ufsDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.uf).filter((u): u is string => !!u))].sort(),
+    [list],
+  );
+  const setoresDisponiveis = useMemo(
+    () => [...new Set(list.map((e) => e.setor).filter((s): s is string => !!s))].sort(),
+    [list],
+  );
+  // Lista dos filtros atualmente ativos — usada tanto pra saber SE tem
+  // filtro ativo (filtrosAtivos) quanto pra mostrar QUANTOS/QUAIS estão
+  // ativos (evita o consultor achar que a lista está vazia por engano
+  // quando na verdade esqueceu um filtro de UF/setor ligado).
+  const filtrosAtivosDetalhes = useMemo(() => {
+    const ativos: string[] = [];
+    if (filtroBusca.trim()) ativos.push("busca");
+    if (filtroStatus) ativos.push("status");
+    if (filtroUf) ativos.push("UF");
+    if (filtroSetor) ativos.push("setor");
+    if (filtroRegime) ativos.push("regime");
+    if (filtroEtapa) ativos.push("etapa");
+    return ativos;
+  }, [filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime, filtroEtapa]);
+  const filtrosAtivos = filtrosAtivosDetalhes.length > 0;
+
+  /**
+   * Contagem de empresas ativas por pasta, usada na barra lateral.
+   * Antes, cada RENDER (inclusive digitar na busca) relia e reprocessava o
+   * localStorage de TODAS as pastas. Agora só recalcula quando algo que pode
+   * ter mudado essas contagens realmente muda: a lista de pastas, a lista da
+   * data/pasta ativa, ou uma ação em lote que mexeu em outra pasta
+   * (pastaCountsVersion).
+   */
+  const contagemPorPasta = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!hydrated) return map;
+    for (const p of pastas) {
+      map.set(p.id, load(`pasta:${p.id}`).filter((e) => e.status !== "sem_interesse").length);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, pastas, list, pastaCountsVersion]);
+
+  /** Pontuação do ranking (mesma lógica do Painel Executivo) por empresa. */
+  const scorePorChave = useMemo(() => {
+    if (!hydrated) return new Map<string, number>();
+    const map = new Map<string, number>();
+    try {
+      for (const s of scoreEmpresas()) {
+        map.set(s.key, s.score);
+        const dig = (s.cnpj ?? "").replace(/\D/g, "");
+        if (dig) map.set(dig, s.score);
+      }
+    } catch {
+      /* histórico indisponível — a esteira segue sem pontuação */
+    }
+    return map;
+  }, [hydrated, list]);
+
+  const scoreDaEmpresa = useCallback(
+    (e: Empresa): number | null => {
+      const dig = (e.cnpj ?? "").replace(/\D/g, "");
+      const porCnpj = dig ? scorePorChave.get(dig) : undefined;
+      if (typeof porCnpj === "number") return porCnpj;
+      const k = empresaKey(e.razaoSocial || e.nome);
+      const v = k ? scorePorChave.get(k) : undefined;
+      return typeof v === "number" ? v : null;
+    },
+    [scorePorChave],
+  );
+
+  const etapaContagem = useMemo(() => {
+    const base: Record<EtapaPipeline, number> = {
+      descobrir: 0,
+      validar: 0,
+      enriquecer: 0,
+      pontuar: 0,
+    };
+    for (const e of empresasOrdenadas) base[etapaDaEmpresa(e, scoreDaEmpresa(e))] += 1;
+    return base;
+  }, [empresasOrdenadas, scoreDaEmpresa]);
+
+  const empresasFiltradas = useMemo(() => {
+    const q = filtroBusca.trim().toLowerCase();
+    const qDig = filtroBusca.replace(/\D/g, "");
+    return empresasOrdenadas.filter((e) => {
+      if (filtroStatus && (e.status ?? "pending") !== filtroStatus) return false;
+      if (filtroEtapa && etapaDaEmpresa(e, scoreDaEmpresa(e)) !== filtroEtapa) return false;
+      if (filtroUf && (e.uf ?? "") !== filtroUf) return false;
+      if (filtroSetor && (e.setor ?? "") !== filtroSetor) return false;
+      if (filtroRegime === "nao_informado") {
+        if (e.regime) return false;
+      } else if (filtroRegime && (e.regime ?? "") !== filtroRegime) return false;
+      if (q) {
+        const nome = `${e.razaoSocial ?? ""} ${e.nome ?? ""}`.toLowerCase();
+        const cnpjDig = (e.cnpj ?? "").replace(/\D/g, "");
+        if (!nome.includes(q) && !(qDig.length >= 2 && cnpjDig.includes(qDig))) return false;
+      }
+      return true;
+    });
+  }, [empresasOrdenadas, filtroBusca, filtroStatus, filtroUf, filtroSetor, filtroRegime, filtroEtapa, scoreDaEmpresa]);
+
+  function limparFiltros() {
+    setFiltroBusca("");
+    setFiltroStatus("");
+    setFiltroUf("");
+    setFiltroSetor("");
+    setFiltroRegime("");
+    setFiltroEtapa("");
+  }
+
+  /** Espera N milissegundos — usado para não estourar o limite de requisições da BrasilAPI. */
+  function aguardar(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Preenche UF/setor/regime (apenas campos vazios) consultando a BrasilAPI,
+   * a partir de uma lista específica (usado tanto pelo botão manual quanto
+   * pela importação por CNPJ e pelo cadastro individual, que disparam isso
+   * sozinhos logo após cadastrar).
+   *
+   * A BrasilAPI é gratuita mas tem limite de requisições por segundo — por
+   * isso aguardamos um pouco entre cada consulta e, se ainda assim vier
+   * "HTTP 429" (limite excedido), esperamos mais e tentamos de novo antes de
+   * desistir daquela empresa.
+   *
+   * `apenasIds`, quando informado, restringe o enriquecimento só a esses
+   * ids (usado pelo cadastro de empresa única, pra não sair reprocessando
+   * empresas antigas da lista toda). `silencioso` evita o toast de "nada
+   * para enriquecer" quando o enriquecimento é disparado automaticamente
+   * (ex.: empresa cadastrada sem CNPJ válido ainda).
+   */
+  async function enriquecerListaCnpjs(
+    baseList: Empresa[],
+    opts?: { apenasIds?: Set<string>; silencioso?: boolean },
+  ) {
+    const apenasIds = opts?.apenasIds;
+    const silencioso = opts?.silencioso ?? false;
+    const alvos = baseList.filter(
+      (e) =>
+        cnpjDigitos(e.cnpj).length === 14 &&
+        (!e.uf || !e.setor || !e.regime) &&
+        (!apenasIds || apenasIds.has(e.id)),
+    );
+    if (alvos.length === 0) {
+      if (!silencioso) {
+        toast.info("Nada para enriquecer: todas já têm UF/setor/regime ou estão sem CNPJ válido.");
+      }
+      return baseList;
+    }
+    setEnriquecendo(true);
+    let atual = [...baseList];
+    let ok = 0;
+    let falhas = 0;
+    const errosVistos: string[] = [];
+    for (let i = 0; i < alvos.length; i++) {
+      const alvo = alvos[i];
+      setProgressoEnriquecimento(`${i + 1}/${alvos.length} · ${alvo.nome}`);
+      // Pausa entre consultas (menos agressiva na primeira) para não
+      // estourar o limite de requisições por segundo da BrasilAPI. Mais
+      // espaçada do que antes porque o limite da API se mostrou mais
+      // apertado do que o esperado em listas grandes.
+      if (i > 0) await aguardar(2500);
+
+      const MAX_TENTATIVAS = 5;
+      let tentativas = 0;
+      let concluido = false;
+      while (!concluido && tentativas < MAX_TENTATIVAS) {
+        tentativas += 1;
+        try {
+          const r = await runConsultarCnpj({ data: { cnpj: alvo.cnpj! } });
+          if (r.ok) {
+            ok += 1;
+            concluido = true;
+            atual = atual.map((e) => {
+              if (e.id !== alvo.id) return e;
+              // Monta um bloco com o que a Receita devolveu e que não tem
+              // campo próprio no cadastro (situação, natureza, porte, capital,
+              // endereço, sócios) — só entra em Observações se estiver vazia,
+              // pra nunca sobrepor anotação manual sua.
+              const extras = [
+                r.situacaoCadastral ? `Situação cadastral: ${r.situacaoCadastral}` : null,
+                r.naturezaJuridica ? `Natureza jurídica: ${r.naturezaJuridica}` : null,
+                r.porte ? `Porte: ${r.porte}` : null,
+                r.dataAbertura ? `Abertura: ${r.dataAbertura}` : null,
+                r.capitalSocial ? `Capital social: ${r.capitalSocial}` : null,
+                r.endereco ? `Endereço: ${r.endereco}` : null,
+                r.socios && r.socios.length
+                  ? `Sócios: ${r.socios.map((s) => s.nome).join(", ")}`
+                  : null,
+              ].filter((linha): linha is string => !!linha);
+              // Só preenche "Contatos adicionais" automaticamente se a
+              // empresa ainda não tiver nenhum — nunca sobrepõe edição manual.
+              // O sócio já usado em "Contato" (campo principal) não é
+              // repetido aqui.
+              const contatosDoQsa: ContatoExtra[] = (r.socios ?? [])
+                .filter(
+                  (s) =>
+                    s.nome.trim().toLowerCase() !== (e.contato ?? "").trim().toLowerCase(),
+                )
+                .map((s) => ({ id: newId(), nome: s.nome, cargo: s.qualificacao ?? undefined }));
+              return {
+                ...e,
+                uf: e.uf || r.uf || undefined,
+                setor: e.setor || r.setor || undefined,
+                regime: e.regime || r.regime || undefined,
+                telefone: e.telefone || r.telefone || undefined,
+                telefoneSecundario: e.telefoneSecundario || r.telefoneSecundario || undefined,
+                email: e.email || r.email || undefined,
+                razaoSocial: e.razaoSocial || r.razaoSocial || undefined,
+                observacoes: e.observacoes || (extras.length ? extras.join(" | ") : undefined),
+                contatosExtras:
+                  e.contatosExtras && e.contatosExtras.length > 0
+                    ? e.contatosExtras
+                    : contatosDoQsa.length
+                      ? contatosDoQsa
+                      : e.contatosExtras,
+              };
+            });
+          } else if (r.erro?.includes("429") && tentativas < MAX_TENTATIVAS) {
+            // Limite de requisições excedido — espera cada vez mais (backoff
+            // exponencial: 3s, 6s, 12s, 24s) e tenta de novo antes de desistir.
+            setProgressoEnriquecimento(
+              `${i + 1}/${alvos.length} · ${alvo.nome} (aguardando limite da API…)`,
+            );
+            await aguardar(3000 * 2 ** (tentativas - 1));
+          } else {
+            falhas += 1;
+            concluido = true;
+            console.error(`Enriquecimento falhou — ${alvo.nome} (${alvo.cnpj}):`, r.erro);
+            if (!errosVistos.includes(r.erro)) errosVistos.push(r.erro);
+          }
+        } catch (err) {
+          falhas += 1;
+          concluido = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`Enriquecimento falhou (exceção) — ${alvo.nome} (${alvo.cnpj}):`, err);
+          if (!errosVistos.includes(msg)) errosVistos.push(msg);
+        }
+      }
+    }
+    persist(atual);
+    setProgressoEnriquecimento(null);
+    setEnriquecendo(false);
+    toast.success(
+      `Enriquecimento concluído: ${ok} empresa(s) atualizada(s)` +
+        (falhas > 0 ? ` · ${falhas} falharam (${errosVistos.slice(0, 2).join("; ")})` : "") +
+        ". Campos preenchidos manualmente foram preservados.",
+    );
+    return atual;
+  }
+
+  /** Preenche UF/setor/regime (apenas campos vazios) da lista atual, consultando a BrasilAPI. */
+  async function enriquecerCnpjs() {
+    await enriquecerListaCnpjs(list);
+  }
+
+  /**
+   * Importação em massa: você cola "Nome - CNPJ" (ou só o CNPJ) uma linha por
+   * empresa. Cria todas de uma vez, ignora CNPJ já cadastrado (evita duplicar)
+   * e, ao final, já dispara o enriquecimento automático — sem precisar clicar
+   * em "Enriquecer via CNPJ" depois.
+   */
+  async function confirmarImportacao() {
+    const linhas = importText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (linhas.length === 0) {
+      toast.error("Cole ao menos uma linha com nome e CNPJ.");
+      return;
+    }
+    setImportando(true);
+    try {
+      const existentes = new Set(
+        list.map((e) => cnpjDigitos(e.cnpj)).filter((d) => d.length === 14),
+      );
+      const novas: Empresa[] = [];
+      let duplicadas = 0;
+      let semCnpj = 0;
+      for (const linha of linhas) {
+        const match = linha.match(/(\d[\d.\-/]{10,}\d)/);
+        const cnpjDig = match ? match[1].replace(/\D/g, "") : "";
+        if (cnpjDig.length !== 14) {
+          semCnpj += 1;
+          continue;
+        }
+        if (existentes.has(cnpjDig) || novas.some((n) => cnpjDigitos(n.cnpj) === cnpjDig)) {
+          duplicadas += 1;
+          continue;
+        }
+        const nome =
+          (match ? linha.replace(match[0], "") : linha)
+            .replace(/^[\s\-–,:]+|[\s\-–,:]+$/g, "")
+            .trim() || cnpjDig;
+        novas.push({
+          id: newId(),
+          nome,
+          textoBruto: linha,
+          status: "pending",
+          cnpj: match![1],
+        });
+        existentes.add(cnpjDig);
+      }
+      if (novas.length === 0) {
+        toast.error(
+          "Nenhum CNPJ válido novo encontrado" +
+            (duplicadas > 0 ? ` (${duplicadas} já estavam cadastrados)` : "") +
+            ".",
+        );
+        return;
+      }
+      const merged = [...list, ...novas];
+      persist(merged);
+      toast.success(
+        `${novas.length} empresa(s) cadastrada(s)` +
+          (duplicadas > 0 ? ` · ${duplicadas} já existia(m)` : "") +
+          (semCnpj > 0 ? ` · ${semCnpj} linha(s) sem CNPJ válido` : "") +
+          ". Buscando os dados automaticamente…",
+      );
+      setImportText("");
+      setImportOpen(false);
+      await enriquecerListaCnpjs(merged);
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  /** Reordena manualmente e persiste a nova ordem da lista do dia. */
+  function onReorder(ev: DragEndEvent) {
+    const activeId = String(ev.active.id);
+    const overId = ev.over ? String(ev.over.id) : null;
+    if (!overId || activeId === overId) return;
+    const ids = empresasFiltradas.map((e) => e.id);
+    const from = ids.indexOf(activeId);
+    const to = ids.indexOf(overId);
+    if (from < 0 || to < 0) return;
+    const novaOrdem = arrayMove(ids, from, to);
+    const byId = new Map(list.map((e) => [e.id, e]));
+    const reordenadas = novaOrdem.map((id) => byId.get(id)!).filter(Boolean);
+    const resto = list.filter((e) => !novaOrdem.includes(e.id));
+    persist(aba === "sem_interesse" ? [...resto, ...reordenadas] : [...reordenadas, ...resto]);
+  }
+  const pendentes = ativas.filter((e) => e.status !== "realizada").length;
+  const realizadas = ativas.length - pendentes;
+
+  const seletorDialog = (
+    <Dialog open={seletorOpen} onOpenChange={setSeletorOpen}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-navy-deep">
+            <Plus className="h-4 w-4" />
+            Adicionar Empresas
+          </DialogTitle>
+          <DialogDescription>
+            Escolha como você quer adicionar empresas agora. Você pode usar formas diferentes em momentos diferentes.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              setDraftOpen(true);
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Pencil className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Cadastrar uma empresa</span>
+            <span className="text-xs text-muted-foreground">
+              Cole os dados completos de uma empresa (razão social, CNPJ, contato, observações). UF/setor/regime são preenchidos automaticamente.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              setImportOpen(true);
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Importar várias por CNPJ</span>
+            <span className="text-xs text-muted-foreground">
+              Cole uma lista de empresas — nome e CNPJ, uma por linha. Ideal quando você já tem os CNPJs em mãos.
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSeletorOpen(false);
+              navigate({ to: "/descobrir" });
+            }}
+            className="flex flex-col items-start gap-2 rounded-xl border border-border/60 bg-card p-4 text-left transition hover:border-primary/50 hover:bg-primary/5"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy-deep/10 text-navy-deep">
+              <Search className="h-4 w-4" />
+            </span>
+            <span className="text-sm font-bold text-navy-deep">Descobrir empresas novas</span>
+            <span className="text-xs text-muted-foreground">
+              Busque empresas novas por cidade e tipo de negócio, sem precisar ter os dados ainda.
+            </span>
+          </button>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-3 p-4 sm:p-6">
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setSeletorOpen(false)}>
+            Cancelar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
-        <PromptLibraryPanel tipo="abordagem" />
+  const importDialog = (
+    <Dialog
+      open={importOpen}
+      onOpenChange={(v) => {
+        if (!v && !importando) {
+          setImportText("");
+          setImportOpen(false);
+        } else if (v) {
+          setImportOpen(true);
+        }
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-navy-deep">
+            <Sparkles className="h-4 w-4" />
+            Importar empresas por CNPJ
+          </DialogTitle>
+          <DialogDescription>
+            Cole uma empresa por linha — nome e CNPJ (ou só o CNPJ). Assim que cadastrar, o
+            sistema já busca sozinho telefone, e-mail, UF, setor, regime, sócios e endereço —
+            sem precisar clicar em "Enriquecer via CNPJ" depois. CNPJs repetidos são ignorados
+            automaticamente.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Uma empresa por linha
+          </Label>
+          <Textarea
+            autoFocus
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={12}
+            placeholder={`Ex.:\nMetalúrgica Paraná LTDA - 00.000.000/0001-00\nIndústria Sul Comércio - 11.111.111/0001-11\n22.222.222/0001-22`}
+            className="min-h-[240px] font-mono text-sm leading-relaxed"
+          />
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setImportText("");
+              setImportOpen(false);
+            }}
+            disabled={importando}
+          >
+            <X className="mr-1 h-4 w-4" />
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => void confirmarImportacao()}
+            disabled={importando || !importText.trim()}
+            className="gap-1 bg-emerald-600 text-white hover:bg-emerald-700"
+          >
+            {importando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            {importando ? (progressoEnriquecimento ?? "Importando…") : "Importar e buscar dados"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  const cadastroDialog = (
+    <Dialog
+      open={draftOpen}
+      onOpenChange={(v) => {
+        if (!v && !saving) {
+          setDraftText("");
+          setDraftOpen(false);
+        } else if (v) {
+          setDraftOpen(true);
+        }
+      }}
+    >
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-navy-deep">
+            <Moon className="h-4 w-4" />
+            Cadastrar Empresa — Preparação Noturna
+          </DialogTitle>
+          <DialogDescription>
+            Cole os dados brutos da empresa (razão social, CNPJ, sócios, contatos, observações). A IA extrai o nome automaticamente, e assim que salvar já buscamos UF/setor/regime pelo CNPJ.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Dados da empresa
+          </Label>
+          <Textarea
+            autoFocus
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
+            rows={16}
+            placeholder={`Ex.:\nRazão Social: Metalúrgica Paraná LTDA\nCNPJ: 00.000.000/0001-00\nContato: João Silva (Diretor)\nTelefone: (41) 99999-9999\nE-mail: joao@empresa.com.br\nObservações: Empresa do setor metalúrgico, faturamento estimado R$ 20MM/ano…`}
+            className="min-h-[320px] text-sm leading-relaxed"
+          />
+        </div>
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setDraftText("");
+              setDraftOpen(false);
+            }}
+            disabled={saving}
+          >
+            <X className="mr-1 h-4 w-4" />
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => void confirmarCadastro()}
+            disabled={saving || !draftText.trim()}
+            className="gap-1 bg-emerald-600 text-white hover:bg-emerald-700"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            {saving ? "Extraindo nome…" : "Confirmar Cadastro"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  const editDialog = (
+    <EditEmpresaDialog
+      empresa={editingEmpresa}
+      todasEmpresas={list}
+      onClose={() => setEditingEmpresa(null)}
+      onSave={saveEmpresaEdits}
+      onRemove={(id) => { removeEmpresa(id); setEditingEmpresa(null); }}
+      onSend={(item) => { setEditingEmpresa(null); enviarParaPre(item); }}
+      onSwitchEmpresa={(item) => setEditingEmpresa(item)}
+    />
+  );
+
+  const pastaDialogNode = (
+    <Dialog open={!!pastaDialog} onOpenChange={(v) => !v && setPastaDialog(null)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-navy-deep">
+            {pastaDialog?.id ? "Renomear pasta" : "Nova pasta de empresas"}
+          </DialogTitle>
+          <DialogDescription>
+            Agrupe empresas por segmento, cidade, campanha ou o critério que quiser (ex.:
+            "Metalúrgicas Curitiba"). Depois é só escolher a pasta que vai trabalhar no dia.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={pastaDialog?.nome ?? ""}
+          onChange={(ev) => setPastaDialog((p) => ({ ...(p ?? { nome: "" }), nome: ev.target.value }))}
+          onKeyDown={(ev) => { if (ev.key === "Enter") salvarPasta(); }}
+          placeholder="Ex.: Indústrias de Curitiba"
+        />
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => setPastaDialog(null)}>
+            Cancelar
+          </Button>
+          <Button onClick={salvarPasta} className="gap-1 bg-navy-deep text-white hover:bg-navy-deep/90">
+            <Save className="h-4 w-4" />
+            Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  const grupoDialog = (
+
+    <Dialog open={!!grupoEscolha} onOpenChange={(v) => !v && setGrupoEscolha(null)}>
+      <DialogContent className="max-w-lg overflow-x-hidden">
+        <DialogHeader>
+          <DialogTitle className="text-navy-deep">
+            Grupo com {grupoEscolha?.unidades.length ?? 0} unidades
+          </DialogTitle>
+          <DialogDescription>
+            Este CNPJ tem matriz e filiais cadastradas. Escolha qual unidade enviar ao Pré-ligação.
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="space-y-2">
+          {grupoEscolha?.unidades.map((u) => {
+            const detalhes = [u.cnpj, unidadeLabel(u.cnpj), cidadeUfDoTexto(u.textoBruto), u.telefone]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <li key={u.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGrupoEscolha(null);
+                    injetarNoPre(u);
+                  }}
+                  className="w-full rounded-xl border border-border/70 bg-card px-3 py-2 text-left transition hover:border-primary/50 hover:bg-primary/5"
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-semibold text-navy-deep">{u.nome}</span>
+                    {unidadeLabel(u.cnpj) && (
+                      <span className="rounded-full bg-navy-deep/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-navy-deep">
+                        {unidadeLabel(u.cnpj)}
+                      </span>
+                    )}
+                    {u.id === grupoEscolha.origem.id && (
+                      <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        clicada
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 break-words text-[11px] text-muted-foreground">
+                    {detalhes || "Sem dados adicionais"}
+                  </p>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </DialogContent>
+    </Dialog>
+  );
 
 
-        <div className="space-y-2">
-          <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
-            <button
-              type="button"
-              onClick={() => setSearchMode("cnpj")}
-              className={`flex-1 rounded px-2 py-1 transition ${searchMode === "cnpj" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
-            >
-              CNPJ
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchMode("nome")}
-              className={`flex-1 rounded px-2 py-1 transition ${searchMode === "nome" ? "bg-background shadow-sm font-medium" : "text-muted-foreground"}`}
-            >
-              Razão social
-            </button>
+
+  if (variant === "full") {
+    return (
+      <div className="font-hub-body overflow-hidden rounded-3xl border border-hub-line/60 bg-hub-bg text-hub-text shadow-2xl">
+        {/* Header */}
+        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-hub-line/50 p-6 pb-5">
+          <div className="min-w-0">
+            <h1 className="font-hub flex items-center gap-2.5 text-2xl font-bold tracking-tight text-hub-text">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-hub-gold/15 text-hub-gold">
+                <Moon className="h-5 w-5" />
+              </span>
+              Preparação Noturna
+            </h1>
+            <p className="mt-1 text-sm font-medium text-hub-muted">
+              Gerencie sua prospecção estratégica e organize o fluxo do dia.
+            </p>
           </div>
+          <div className="flex flex-col items-end gap-2.5">
+            <div className="flex items-center gap-1 rounded-lg bg-hub-surface p-1">
+              <button
+                type="button"
+                onClick={() => setDate(todayISO())}
+                className={
+                  "rounded-md px-3.5 py-1.5 text-xs font-semibold transition " +
+                  (!isPastaBucket(date) && date === todayISO()
+                    ? "bg-hub-raised text-hub-text shadow-sm"
+                    : "text-hub-muted hover:text-hub-text")
+                }
+              >
+                Hoje
+              </button>
+              <input
+                type="date"
+                value={isPastaBucket(date) ? "" : date}
+                onChange={(e) => setDate(e.target.value || todayISO())}
+                title="Lista do dia"
+                className="w-[130px] bg-transparent pr-1 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setSeletorOpen(true)}
+                className="gap-2 rounded-xl bg-hub-gold px-4 py-2 text-sm font-bold text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+              >
+                <Plus className="h-4 w-4" />
+                Adicionar Empresas
+              </Button>
+            </div>
+          </div>
+        </header>
 
-          {searchMode === "cnpj" ? (
-            <div>
-              <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                <Label htmlFor="cnpj" className="text-xs">
-                  Buscar por CNPJ (BrasilAPI)
-                </Label>
-                {import.meta.env.DEV && (
+        {/* Métricas — clicáveis: aplicam o filtro de status correspondente e trocam de aba quando preciso */}
+        <div className="grid grid-cols-3 gap-4 border-b border-hub-line/50 bg-hub-surface/40 px-6 py-4">
+          <button
+            type="button"
+            onClick={() => {
+              setAba("ativas");
+              setFiltroStatus((atual) => (atual === "pending" ? "" : "pending"));
+            }}
+            title="Filtrar pelas empresas pendentes"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "ativas" && filtroStatus === "pending"
+                ? "border-amber-400/60 bg-amber-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-400/10 text-amber-300">
+              <Loader2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Pendentes</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{pendentes}</p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAba("ativas");
+              setFiltroStatus((atual) => (atual === "realizada" ? "" : "realizada"));
+            }}
+            title="Filtrar pelas empresas já realizadas"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "ativas" && filtroStatus === "realizada"
+                ? "border-emerald-400/60 bg-emerald-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">
+              <Check className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Realizadas</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{realizadas}</p>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAba((atual) => (atual === "sem_interesse" ? "ativas" : "sem_interesse"));
+              setFiltroStatus("");
+            }}
+            title="Ver a lista de empresas sem interesse / reabordagem"
+            className={
+              "flex items-center gap-3 rounded-xl border-2 px-2 py-1.5 text-left transition " +
+              (aba === "sem_interesse"
+                ? "border-rose-400/60 bg-rose-400/10"
+                : "border-transparent hover:bg-hub-surface")
+            }
+          >
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-rose-400/10 text-rose-300">
+              <X className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">Sem interesse</p>
+              <p className="font-hub text-2xl font-bold text-hub-text">{semInteresse.length}</p>
+            </div>
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row">
+          {/* Coluna lateral — Pastas */}
+          <aside className="shrink-0 border-b border-hub-line/50 p-3 md:w-60 md:border-b-0 md:border-r">
+            <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+              Pastas
+            </p>
+            <div className="max-h-[420px] space-y-1 overflow-y-auto pr-1 md:max-h-[560px]">
+              <button
+                type="button"
+                onClick={() => setDate(todayISO())}
+                title="Voltar para a lista por data"
+                className={
+                  "flex w-full items-center gap-2.5 rounded-xl border-2 px-3 py-2.5 text-left transition " +
+                  (!isPastaBucket(date)
+                    ? "border-hub-gold bg-hub-gold/10"
+                    : "border-transparent hover:bg-hub-surface")
+                }
+              >
+                <span
+                  className={
+                    "grid h-8 w-8 shrink-0 place-items-center rounded-lg " +
+                    (!isPastaBucket(date) ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                  }
+                >
+                  <CalendarDays className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={"block truncate text-xs font-bold " + (!isPastaBucket(date) ? "text-hub-gold" : "text-hub-text")}>
+                    Lista do dia
+                  </span>
+                  <span className="block text-[10px] font-medium text-hub-muted">por data</span>
+                </span>
+              </button>
+
+              <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorderPastas}>
+                <SortableContext items={pastas.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                  {pastas.map((p) => {
+                    const bucket = `pasta:${p.id}`;
+                    const ativa = date === bucket;
+                    const qtd = contagemPorPasta.get(p.id) ?? 0;
+                    return (
+                      <SortablePastaRow
+                        key={p.id}
+                        id={p.id}
+                        className={
+                          "group relative flex items-center rounded-xl border-2 transition " +
+                          (ativa ? "border-hub-gold bg-hub-gold/10" : "border-transparent hover:bg-hub-surface")
+                        }
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setDate(bucket)}
+                          title="Trabalhar esta pasta"
+                          className="flex min-w-0 flex-1 items-center gap-2.5 py-2.5 pl-1 pr-12 text-left"
+                        >
+                          <span
+                            className={
+                              "grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[11px] font-bold " +
+                              (ativa ? "bg-hub-gold text-hub-gold-ink" : "bg-hub-raised text-hub-muted")
+                            }
+                          >
+                            {qtd}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={
+                                "block truncate text-xs font-bold " + (ativa ? "text-hub-gold" : "text-hub-text")
+                              }
+                            >
+                              {p.nome}
+                            </span>
+                            <span className="block text-[10px] font-medium text-hub-muted">{qtd} empresa(s)</span>
+                          </span>
+                        </button>
+                        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 gap-0.5 opacity-70 transition md:opacity-0 md:group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => setPastaDialog({ id: p.id, nome: p.nome })}
+                            className="rounded-md p-1 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                            title="Renomear pasta"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => excluirPasta(p.id)}
+                            className="rounded-md p-1 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                            title="Excluir pasta"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </SortablePastaRow>
+                    );
+                  })}
+                </SortableContext>
+              </DndContext>
+
+              <button
+                type="button"
+                onClick={() => setPastaDialog({ nome: "" })}
+                className="flex w-full items-center gap-2.5 rounded-xl border border-dashed border-hub-line px-3 py-2.5 text-left text-hub-muted transition hover:border-hub-gold/60 hover:bg-hub-gold/5 hover:text-hub-gold"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg">
+                  <Plus className="h-4 w-4" />
+                </span>
+                <span className="text-xs font-bold uppercase tracking-wider">Nova pasta</span>
+              </button>
+            </div>
+          </aside>
+
+          {/* Coluna principal — abas, filtros e lista */}
+          <div className="min-w-0 flex-1">
+            {/* Abas + contexto da pasta */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hub-line/50 px-6">
+              <div className="flex gap-6">
+                <button
+                  type="button"
+                  onClick={() => setAba("ativas")}
+                  className={
+                    "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                    (aba === "ativas"
+                      ? "border-hub-gold text-hub-text"
+                      : "border-transparent text-hub-muted hover:text-hub-text")
+                  }
+                >
+                  FILA ATIVA ({ativas.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAba("sem_interesse")}
+                  className={
+                    "border-b-2 py-3.5 text-xs font-bold tracking-wide transition " +
+                    (aba === "sem_interesse"
+                      ? "border-rose-400 text-rose-300"
+                      : "border-transparent text-hub-muted hover:text-hub-text")
+                  }
+                >
+                  SEM INTERESSE / REABORDAGEM ({semInteresse.length})
+                </button>
+              </div>
+              {pastaAtual && (
+                <div
+                  className="mb-1 flex items-center gap-1.5 rounded-full bg-hub-gold/10 px-3 py-1 text-[11px] font-bold text-hub-gold"
+                  title="As empresas da pasta não se misturam com as listas por data — use a seleção em lote para enviá-las a um dia específico."
+                >
+                  Pasta: {pastaAtual.nome}
+                </div>
+              )}
+            </div>
+
+            {/* Barra unificada: esteira (filtro rápido por etapa) + busca em destaque + filtros secundários + enriquecer */}
+            <div className="space-y-3 border-b border-hub-line/50 bg-hub-surface/30 px-6 py-3">
+              {/* Linha 1 — esteira, compacta */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {ETAPAS.map((etapa) => {
+                  const ativo = filtroEtapa === etapa.id;
+                  return (
+                    <button
+                      key={etapa.id}
+                      type="button"
+                      title={etapa.ajuda}
+                      onClick={() => setFiltroEtapa(ativo ? "" : etapa.id)}
+                      className={
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition " +
+                        (ativo
+                          ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
+                      }
+                    >
+                      {etapa.label}
+                      <span className="rounded-full bg-hub-raised px-1.5 py-0.5 text-[10px] text-hub-text">
+                        {etapaContagem[etapa.id]}
+                      </span>
+                    </button>
+                  );
+                })}
+                {filtroEtapa && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setCnpj("00000000000100");
-                      handleLookup("00000000000100");
-                    }}
-                    className="text-[10px] uppercase tracking-wide text-amber-700 hover:text-amber-900 hover:underline"
-                    title="Injeta uma metalúrgica fictícia para testar o fluxo sem consumir APIs"
+                    onClick={() => setFiltroEtapa("")}
+                    className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 text-[11px] font-bold text-hub-muted transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
                   >
-                    Injetar Empresa de Teste
+                    Limpar etapa
                   </button>
                 )}
               </div>
 
-              <div className="mt-1 flex gap-2">
-                <Input
-                  id="cnpj"
-                  placeholder="00.000.000/0000-00 ou só números"
-                  value={cnpj}
-                  onChange={(e) => setCnpj(e.target.value.replace(/[^\d./-]/g, ""))}
-                  onPaste={(e) => {
-                    const pasted = e.clipboardData.getData("text");
-                    const cleaned = pasted.replace(/[^\d]/g, "");
-                    if (cleaned.length >= 8) {
-                      e.preventDefault();
-                      setCnpj(cleaned);
-                    }
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && handleLookup()}
-                />
-                <Button onClick={() => handleLookup()} disabled={loadingCnpj} variant="secondary">
-                  {loadingCnpj ? (
+              {/* Linha 2 — busca (destaque, sempre em primeiro) + ação de enriquecer, separada dos filtros */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="relative min-w-[240px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-hub-muted" />
+                  <input
+                    value={filtroBusca}
+                    onChange={(ev) => setFiltroBusca(ev.target.value)}
+                    placeholder="Buscar por Razão Social ou CNPJ..."
+                    className="w-full rounded-lg border border-hub-line/60 bg-hub-surface py-2 pl-9 pr-3 text-[13px] text-hub-text placeholder:text-hub-muted/70 outline-none transition focus:border-hub-gold/60"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={enriquecendo}
+                  onClick={() => void enriquecerCnpjs()}
+                  title="Preenche UF, setor e regime (somente campos vazios) consultando o CNPJ"
+                  className="flex shrink-0 items-center gap-2 rounded-lg bg-hub-raised px-3.5 py-2 text-xs font-bold text-hub-text shadow-sm transition hover:bg-hub-line disabled:opacity-60"
+                >
+                  {enriquecendo ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Search className="h-4 w-4" />
+                    <Sparkles className="h-4 w-4 text-hub-gold" />
                   )}
-                </Button>
+                  {enriquecendo ? (progressoEnriquecimento ?? "Enriquecendo…") : "Enriquecer via CNPJ"}
+                </button>
               </div>
-            </div>
-          ) : (
-            <div>
-              <Label htmlFor="nome-busca" className="text-xs">
-                Buscar por nome fantasia ou razão social
-              </Label>
-              <div className="mt-1 flex gap-2">
-                <Input
-                  id="nome-busca"
-                  placeholder="Ex.: Padaria do João, Construtora ABC…"
-                  value={nomeBusca}
-                  onChange={(e) => setNomeBusca(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
-                />
-                <Button onClick={handleBuscaNome} disabled={loadingBusca} variant="secondary">
-                  {loadingBusca ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Search className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Busca via CNPJá. Clique em um resultado para carregar os dados completos.
-              </p>
 
-              {resultados.length > 0 && (
-                <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
-                  {resultados.map((m) => (
-                    <li key={m.cnpj}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchMode("cnpj");
-                          setCnpj(m.cnpj);
-                          handleLookup(m.cnpj);
-                        }}
-                        className="w-full cursor-pointer rounded border border-transparent p-2 text-left text-xs transition hover:border-primary/40 hover:bg-primary/5"
-                      >
-                        <div className="font-medium">
-                          {m.razaoSocial}
-                          {m.nomeFantasia && (
-                            <span className="text-muted-foreground"> · {m.nomeFantasia}</span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {m.cnpjFormatado}
-                          {m.tipo && ` · ${m.tipo}`}
-                          {m.situacao && ` · ${m.situacao}`}
-                          {m.cidadeUf && ` · ${m.cidadeUf}`}
-                        </div>
-                        {m.atividade && (
-                          <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-                            {m.atividade}
-                          </div>
-                        )}
-                      </button>
-                    </li>
+              {/* Linha 3 — filtros secundários (usados com menos frequência que a busca) */}
+              <div className="flex flex-wrap items-center gap-2.5 border-t border-hub-line/40 pt-2.5">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                  Filtrar por:
+                </span>
+                {filtrosAtivos && (
+                  <span
+                    className="rounded-full bg-hub-gold/15 px-2.5 py-1 text-[10px] font-bold text-hub-gold"
+                    title={`Filtros ativos: ${filtrosAtivosDetalhes.join(", ")}`}
+                  >
+                    {filtrosAtivosDetalhes.length} filtro(s) ativo(s)
+                  </span>
+                )}
+                <select
+                  value={filtroStatus}
+                  onChange={(ev) => setFiltroStatus(ev.target.value as "" | EmpresaStatus)}
+                  title="Filtrar por status"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Status: todas</option>
+                  <option value="pending">Pendentes</option>
+                  <option value="realizada">Realizadas</option>
+                  <option value="sem_interesse">Sem interesse</option>
+                </select>
+                <select
+                  value={filtroUf}
+                  onChange={(ev) => setFiltroUf(ev.target.value)}
+                  title="Filtrar por UF"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todas UF</option>
+                  {ufsDisponiveis.map((uf) => (
+                    <option key={uf} value={uf}>{uf}</option>
                   ))}
-                </ul>
-              )}
+                </select>
+                <select
+                  value={filtroSetor}
+                  onChange={(ev) => setFiltroSetor(ev.target.value)}
+                  title="Filtrar por setor"
+                  className="max-w-[160px] rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todos os setores</option>
+                  {setoresDisponiveis.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <select
+                  value={filtroRegime}
+                  onChange={(ev) => setFiltroRegime(ev.target.value)}
+                  title="Filtrar por regime tributário"
+                  className="rounded-lg border border-hub-line/60 bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                >
+                  <option value="">Todos os regimes</option>
+                  {REGIMES.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                  <option value="nao_informado">Não informado</option>
+                </select>
+                {filtrosAtivos && (
+                  <button
+                    type="button"
+                    onClick={limparFiltros}
+                    className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1.5 text-xs font-bold text-hub-muted transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
             </div>
-          )}
 
-          {empresaResumo && (
-            <p className="rounded border border-gold/30 bg-gold/10 px-2 py-1 text-xs text-gold-soft">
-              {empresaResumo} — dados adicionados abaixo
-            </p>
-          )}
-
-          {(currentLeadState?.razaoSocial || empresaResumo) && (
-            <HistoricoEmpresaSheet
-              empresa={currentLeadState?.razaoSocial ?? empresaResumo ?? null}
-              cnpj={currentLeadState?.cnpj ?? cnpj ?? null}
-            />
-          )}
-
-
-          {empresaResumo && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleEnrichPhones}
-              disabled={loadingFones}
-              className="w-full border-border text-xs"
-              title="Consulta CNPJ.biz + site oficial via Firecrawl (consome créditos)"
-            >
-              {loadingFones ? (
-                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-              ) : (
-                <Search className="mr-2 h-3 w-3" />
-              )}
-              Buscar mais telefones
-            </Button>
-          )}
-
-
-
-          {(loadingFones || telefones) && (
-            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-semibold">
-                  Telefones da empresa
-                  {loadingFones && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {telefones && telefones.telefones.length > 0 && (
-                    <span className="rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-medium">
-                      {telefones.telefones.length}
+            {/* Lista */}
+            <div className="px-6 pb-6 pt-4">
+              <div className="flex items-center justify-between pb-3">
+                <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-hub-muted">
+                  {empresasFiltradas.length} empresa(s)
+                  {filtrosAtivos && (
+                    <span
+                      className="rounded-full bg-hub-gold/15 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-hub-gold"
+                      title={`Filtros ativos: ${filtrosAtivosDetalhes.join(", ")}`}
+                    >
+                      {filtrosAtivosDetalhes.length} filtro(s) ativo(s)
                     </span>
                   )}
-                </div>
-                {telefones && telefones.telefones.length > 0 && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={async () => {
-                      const txt = telefones.telefones
-                        .map((t) => (t.setor ? `${t.numero} — ${t.setor}` : t.numero))
-                        .join("\n");
-                      await navigator.clipboard.writeText(txt);
-                      toast.success("Todos os telefones copiados");
-                    }}
-                  >
-                    <Copy className="mr-1 h-3 w-3" />
-                    Copiar todos
-                  </Button>
+                </span>
+                {empresasFiltradas.length > 0 && (
+                  <div className="flex items-center gap-2 text-[11px] font-semibold text-hub-muted">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelecionados(
+                          selecionados.length === empresasFiltradas.length
+                            ? []
+                            : empresasFiltradas.map((x) => x.id),
+                        )
+                      }
+                      className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 font-bold transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
+                    >
+                      Selecionar todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelecionados(
+                          empresasFiltradas.filter((x) => x.status !== "realizada").map((x) => x.id),
+                        )
+                      }
+                      className="rounded-lg border border-hub-line/50 bg-hub-surface px-2.5 py-1 font-bold transition hover:border-hub-gold/40 hover:bg-hub-gold/5 hover:text-hub-gold"
+                    >
+                      Só pendentes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBarraLoteAberta((v) => !v)}
+                      title="Copiar ou mover as empresas selecionadas para outra data/pasta"
+                      className={
+                        "flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold normal-case tracking-normal transition " +
+                        (barraLoteAberta
+                          ? "border-hub-gold/60 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-line/50 bg-hub-surface text-hub-muted hover:border-hub-gold/40 hover:text-hub-text")
+                      }
+                    >
+                      Ações em lote
+                      {selecionados.length > 0 && (
+                        <span className="rounded-full bg-hub-gold/20 px-1.5 py-0.5 text-[10px] text-hub-gold">
+                          {selecionados.length}
+                        </span>
+                      )}
+                      {barraLoteAberta ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
                 )}
               </div>
 
-              {telefones && telefones.siteOficial && (
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  Site identificado:{" "}
-                  <a
-                    href={telefones.siteOficial}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline"
-                  >
-                    {telefones.siteOficial.replace(/^https?:\/\//, "")}
-                  </a>
-                </p>
-              )}
-
-              {telefones && telefones.telefones.length === 0 && !loadingFones && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Nenhum telefone encontrado nas fontes consultadas.
-                </p>
-              )}
-
-              {telefones && telefones.telefones.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {telefones.telefones.map((t, i) => (
-                    <li
-                      key={t.numero + i}
-                      className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1.5 text-xs"
+              {/* Barra de ações em lote — recolhida por padrão, expande sob demanda */}
+              {barraLoteAberta && empresasFiltradas.length > 0 && (
+                <div className="mb-4 flex flex-wrap items-center gap-4 rounded-2xl border border-hub-line bg-hub-raised/95 p-4 shadow-lg">
+                  <div className="flex items-center gap-3 border-r border-hub-line pr-4">
+                    <span className="text-sm font-bold text-hub-text">
+                      {selecionados.length} selecionada(s)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelecionados([])}
+                      className="rounded-md bg-hub-surface px-2.5 py-1 text-[10px] font-bold uppercase tracking-tight text-hub-muted hover:text-hub-text"
                     >
-                      <div className="flex flex-1 items-center gap-2 min-w-0">
-                        <span className="font-mono font-medium">{t.numero}</span>
-                        {t.setor && (
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {t.setor}
-                          </span>
-                        )}
-                        <span className="truncate text-[10px] text-muted-foreground">
-                          {t.fontes.join(" · ")}
-                        </span>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2"
-                        onClick={async () => {
-                          await navigator.clipboard.writeText(t.numero);
-                          toast.success(`Copiado: ${t.numero}`);
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+                      Limpar
+                    </button>
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                    <select
+                      value={bulkMode}
+                      onChange={(ev) => setBulkMode(ev.target.value as "copiar" | "mover")}
+                      className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                    >
+                      <option value="copiar">Copiar (mantém aqui)</option>
+                      <option value="mover">Mover (remove daqui)</option>
+                    </select>
+                    <select
+                      value={bulkPasta}
+                      onChange={(ev) => {
+                        setBulkPasta(ev.target.value);
+                        if (ev.target.value) setBulkDate("");
+                      }}
+                      title="Enviar para uma pasta"
+                      className="max-w-[200px] rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none"
+                    >
+                      <option value="">Destino: pasta…</option>
+                      {pastas
+                        .filter((p) => `pasta:${p.id}` !== date)
+                        .map((p) => (
+                          <option key={p.id} value={`pasta:${p.id}`}>
+                            📁 {p.nome}
+                          </option>
+                        ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={bulkDate}
+                      onChange={(ev) => {
+                        setBulkDate(ev.target.value);
+                        if (ev.target.value) setBulkPasta("");
+                      }}
+                      title="Destino: data"
+                      className="rounded-lg border border-hub-line bg-hub-surface px-2.5 py-2 text-xs font-medium text-hub-text outline-none [color-scheme:dark]"
+                    />
+                  </div>
+                  <Button
+                    onClick={moverSelecionados}
+                    className="gap-2 rounded-xl bg-hub-gold px-5 py-2.5 text-xs font-bold uppercase tracking-wide text-hub-gold-ink shadow-lg shadow-hub-gold/20 transition hover:bg-hub-gold/90"
+                  >
+                    <CalendarDays className="h-4 w-4" />
+                    Enviar
+                  </Button>
+                </div>
               )}
 
-              {telefones && telefones.fontesFalhas.length > 0 && (
-                <p className="mt-2 text-[10px] text-muted-foreground">
-                  Fontes sem retorno:{" "}
-                  {telefones.fontesFalhas.map((f) => `${f.fonte} (${f.motivo})`).join(" · ")}
-                </p>
+              {empresasOrdenadas.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-16 text-center text-sm text-hub-muted">
+                  {aba === "sem_interesse"
+                    ? "Nenhuma empresa marcada como sem interesse aqui."
+                    : pastaAtual
+                      ? `A pasta "${pastaAtual.nome}" está vazia. Use "Adicionar Empresas" para adicionar empresas nela.`
+                      : `Sem empresas planejadas para ${date}. Use "Adicionar Empresas" para começar.`}
+                </div>
+              ) : empresasFiltradas.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-hub-line bg-hub-surface/40 px-6 py-10 text-center text-sm text-hub-muted">
+                  Nenhuma empresa corresponde aos filtros.{" "}
+                  <button type="button" onClick={limparFiltros} className="font-medium text-hub-gold underline">
+                    Limpar filtros
+                  </button>
+                </div>
+              ) : (
+                <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
+                  <SortableContext items={empresasFiltradas.map((e) => e.id)} strategy={verticalListSortingStrategy}>
+                    <ul className="space-y-2.5 pb-24">
+                      {empresasFiltradas.map((e) => {
+                        const recusado = e.status === "sem_interesse";
+                        const done = e.status === "realizada";
+                        const unidades = unidadesDoGrupo(e);
+                        const meta: string[] = [];
+                        if (unidadeLabel(e.cnpj)) meta.push(unidadeLabel(e.cnpj)!);
+                        if (e.telefone) meta.push(e.telefone);
+                        if (e.contato) meta.push(e.cargo ? `${e.contato} (${e.cargo})` : e.contato);
+                        if (e.email) meta.push(e.email);
+                        const selecionado = selecionados.includes(e.id);
+                        return (
+                          <SortableEmpresaRow
+                            key={e.id}
+                            id={e.id}
+                            className={
+                              "group flex flex-wrap items-center gap-3 rounded-2xl border border-l-4 px-4 py-3.5 transition " +
+                              (recusado
+                                ? "border-l-rose-400 "
+                                : done
+                                  ? "border-l-emerald-400 "
+                                  : "border-l-amber-400 ") +
+                              (recusado
+                                ? "border-rose-400/20 bg-rose-400/5"
+                                : done
+                                  ? "border-emerald-400/20 bg-emerald-400/5"
+                                  : selecionado
+                                    ? "border-hub-gold/50 bg-hub-gold/5"
+                                    : "border-hub-line/50 bg-hub-surface hover:border-hub-gold/40 hover:shadow-lg hover:shadow-black/30")
+                            }
+                          >
+                            <label
+                              className="flex shrink-0 cursor-pointer items-center justify-center rounded-md p-1.5 hover:bg-hub-raised"
+                              title="Selecionar para mover em lote"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selecionado}
+                                onChange={() => toggleSelecionado(e.id)}
+                                className="h-4 w-4 accent-[#e8c15a]"
+                              />
+                            </label>
+                            <div className="min-w-0 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingEmpresa(e)}
+                                className={
+                                  "block max-w-full truncate text-left font-hub text-sm font-bold transition hover:text-hub-gold " +
+                                  (recusado ? "text-rose-300" : done ? "text-emerald-300" : "text-hub-text")
+                                }
+                                title="Abrir e editar dados"
+                              >
+                                {e.nome}
+                              </button>
+                              <p className="mt-0.5 truncate font-mono text-[11px] tracking-tight text-hub-muted">
+                                {e.cnpj ? `CNPJ ${e.cnpj}` : "Sem CNPJ"}
+                                {meta.length > 0 && <span className="font-hub-body"> · {meta.join(" · ")}</span>}
+                              </p>
+                            </div>
+                            {unidades.length > 1 && (
+                              <span
+                                className="shrink-0 rounded-full bg-hub-gold/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-hub-gold"
+                                title="Matriz e filiais do mesmo grupo — você escolhe a unidade ao enviar ao Pré"
+                              >
+                                Grupo · {unidades.length}
+                              </span>
+                            )}
+                            {(() => {
+                              const cnpjOk = cnpjValido(e.cnpj);
+                              const dadosOk = !!(e.uf && e.setor && e.regime);
+                              const sc = scoreDaEmpresa(e);
+                              const ligacaoOk = typeof sc === "number";
+                              const faltando = [
+                                !cnpjOk && "CNPJ",
+                                !dadosOk && "dados",
+                                !ligacaoOk && "ligação",
+                              ].filter(Boolean) as string[];
+                              const tudoOk = faltando.length === 0;
+                              return (
+                                <span
+                                  className={
+                                    "shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold " +
+                                    (tudoOk
+                                      ? "bg-emerald-400/10 text-emerald-300"
+                                      : "bg-amber-400/10 text-amber-300")
+                                  }
+                                  title={`CNPJ ${cnpjOk ? "ok" : "faltando"} · Dados (UF/setor/regime) ${dadosOk ? "ok" : "faltando"} · Ligação ${ligacaoOk ? "feita" : "faltando"}`}
+                                >
+                                  {tudoOk ? "Pronto para ligação" : `Faltando: ${faltando.join(", ")}`}
+                                  {ligacaoOk && (
+                                    <span className="ml-1.5 rounded-full bg-hub-gold/10 px-2 py-0.5 text-[11px] font-bold text-hub-gold">
+                                      {sc}
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                            {recusado ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-rose-400/10 px-2.5 py-1 text-[11px] font-bold text-rose-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-rose-400" />
+                                Sem interesse
+                              </span>
+                            ) : done ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                Realizada
+                              </span>
+                            ) : (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-2.5 py-1 text-[11px] font-bold text-amber-300">
+                                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                Pendente
+                              </span>
+                            )}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                onClick={() => enviarParaPre(e)}
+                                className={
+                                  "h-8 gap-1 rounded-lg text-[11px] font-bold " +
+                                  (recusado
+                                    ? "border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                                    : done
+                                      ? "border border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                                      : "bg-hub-gold text-hub-gold-ink hover:bg-hub-gold/90")
+                                }
+                                title={
+                                  recusado
+                                    ? "Sem interesse — reabordagem futura"
+                                    : done
+                                      ? "Já ligada hoje — clique para ligar novamente"
+                                      : "Enviar ao Pré-ligação"
+                                }
+                              >
+                                {recusado ? <X className="h-3.5 w-3.5" /> : done ? <Check className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 fill-current" />}
+                                {recusado ? "Reabordar" : done ? "Ligar de novo" : "Enviar ao Pré"}
+                                {!done && !recusado && <ArrowRight className="h-3.5 w-3.5" />}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingEmpresa(e)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+                                title="Editar"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <MudarDataPopover
+                                dataAtual={date}
+                                onConfirmar={(novaData) => moveToDate(e.id, novaData)}
+                              />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => removeEmpresa(e.id)}
+                                className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-rose-500/20 hover:text-rose-300"
+                                title="Excluir"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </SortableEmpresaRow>
+                        );
+                      })}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
               )}
             </div>
-          )}
-
-
-        </div>
-
-
-        <div ref={dadosSectionRef}>
-
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="dados" className="text-xs">
-              Dados da empresa
-            </Label>
-            {contingenciaAtiva && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
-                Modo Manual de Contingência
-              </span>
-            )}
           </div>
-          <Textarea
-            id="dados"
-            value={dados}
-            onChange={(e) => {
-              dadosDirtyRef.current = true;
-              setDados(e.target.value);
-            }}
-            rows={9}
-            placeholder={
-              contingenciaAtiva
-                ? "APIs públicas fora do ar. Cole aqui os dados coletados manualmente (Razão social, CNPJ, CNAE, Endereço...) e clique em Compilar Script."
-                : "Cole aqui CNPJ, razão social, sócios, atividade, contato do fiscal, etc. Ou use a busca acima."
-            }
-            className={`mt-1 text-sm ${contingenciaAtiva ? "border-amber-400 focus-visible:ring-amber-400/40" : ""}`}
-          />
         </div>
 
+        {seletorDialog}
+        {importDialog}
+        {cadastroDialog}
+        {editDialog}
+        {grupoDialog}
+        {pastaDialogNode}
 
-        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-foreground">
-              Modo Esteira <span className="text-primary">(Contato por IA)</span>
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              {modoEsteira
-                ? "Compila o script a partir do prompt + dados do lead e delega o nome do contato à IA."
-                : "Usa o Lovable AI Gateway para gerar o script (consome créditos)."}
-            </span>
-          </div>
-          <Switch
-            checked={modoEsteira}
-            onCheckedChange={setModoEsteira}
-            aria-label="Alternar Modo Esteira"
-          />
+      </div>
+    );
+  }
+
+  // Compact (sidebar) — link para tela cheia + lista enxuta e rolável
+  return (
+    <div className="rounded-xl border border-navy-deep/15 bg-card p-3 shadow-card">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-navy-deep">
+          <Moon className="h-3.5 w-3.5" />
+          Preparação Noturna
         </div>
-
-        <Button
-          onClick={handleProcessScript}
-          disabled={loadingGen}
-          size="lg"
-          className="h-12 w-full text-base font-semibold"
+        <button
+          type="button"
+          onClick={() => navigate({ to: "/preparacao" })}
+          className="inline-flex items-center gap-1 rounded-md border border-navy-deep/20 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-navy-deep hover:bg-primary/5"
+          title="Abrir em tela cheia"
         >
-          {loadingGen ? (
-            <>
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Gerando...
-            </>
-          ) : modoEsteira ? (
-            <>
-              <Sparkles className="mr-2 h-5 w-5" />
-              Compilar script
-            </>
-          ) : (
-            <>
-              <Sparkles className="mr-2 h-5 w-5" />
-              Gerar script com IA
-            </>
-          )}
-        </Button>
+          <Maximize2 className="h-3 w-3" />
+          Expandir
+        </button>
+      </div>
 
+      {pastas.length > 0 && (
+        <select
+          value={isPastaBucket(date) ? date : ""}
+          onChange={(ev) => setDate(ev.target.value || todayISO())}
+          className="mb-2 h-7 w-full rounded-md border border-border/60 bg-white px-2 text-[11px] text-navy-deep"
+        >
+          <option value="">📅 Lista do dia</option>
+          {pastas.map((p) => (
+            <option key={p.id} value={`pasta:${p.id}`}>
+              📁 {p.nome}
+            </option>
+          ))}
+        </select>
+      )}
 
-        {script && (
-          <Collapsible
-            open={scriptOpen}
-            onOpenChange={setScriptOpen}
-            className="rounded-md border bg-muted/30"
-          >
-            <div className="flex items-center justify-between gap-2 p-3">
-              <CollapsibleTrigger asChild>
-                <button className="flex flex-1 items-center gap-2 text-left text-xs font-medium hover:underline">
-                  <span>{scriptOpen ? "▼" : "▶"}</span>
-                  <span>Script gerado</span>
-                  <span className="text-muted-foreground">
-                    ({scriptOpen ? "clique para recolher" : "clique para expandir"})
-                  </span>
-                </button>
-              </CollapsibleTrigger>
-              <div className="flex flex-wrap items-center gap-1">
-                <Button size="sm" variant="ghost" onClick={downloadScript}>
-                  <Download className="mr-1 h-3 w-3" />
-                  Baixar
-                </Button>
-                <Button size="sm" variant="ghost" onClick={copyScript}>
-                  <Copy className="mr-1 h-3 w-3" />
-                  Copiar
-                </Button>
-                <CallRecorderButton
-                  empresa={currentLeadState?.razaoSocial ?? empresaResumo ?? null}
-                  cnpj={currentLeadState?.cnpj ?? null}
-                />
+      <div className="mb-2 flex items-center gap-2">
+        <Input
+          type="date"
+          value={isPastaBucket(date) ? "" : date}
+          onChange={(e) => setDate(e.target.value || todayISO())}
+          className="h-7 flex-1 text-[11px]"
+          disabled={isPastaBucket(date)}
+        />
 
-              </div>
-            </div>
-            <CollapsibleContent className="border-t px-3 pb-3 pt-3">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                {script}
-              </pre>
-              <div className="mt-3 flex items-center justify-center border-t pt-3">
+        <span className="rounded-md bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {pendentes} pend.
+        </span>
+        {semInteresse.length > 0 && (
+          <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-700" title="Sem interesse — reabordagem futura">
+            {semInteresse.length} 🔴
+          </span>
+        )}
+      </div>
+
+      <Button
+        size="sm"
+        onClick={() => setSeletorOpen(true)}
+        className="mb-2 h-8 w-full gap-1 bg-navy-deep text-white hover:bg-navy-deep/90"
+      >
+        <Plus className="h-4 w-4" />
+        <span className="text-[11px] font-semibold">Adicionar Empresas</span>
+      </Button>
+
+      {ativas.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border/60 bg-muted/30 px-3 py-4 text-center text-[11px] text-muted-foreground">
+          Sem empresas planejadas para {date}.
+        </div>
+      ) : (
+        <ul className="max-h-[240px] space-y-1.5 overflow-y-auto pr-1">
+          {ativas.slice(0, 8).map((e) => {
+            const done = e.status === "realizada";
+            return (
+              <li
+                key={e.id}
+                className={
+                  "group flex items-center gap-1.5 rounded-md border border-l-4 px-2 py-1.5 transition " +
+                  (done
+                    ? "border-l-emerald-500 border-emerald-500/40 bg-emerald-500/10"
+                    : "border-l-amber-400 border-border/60 bg-white hover:border-navy-deep/40 hover:bg-primary/5")
+                }
+                title={e.nome}
+              >
+                {done && <Check className="h-3 w-3 shrink-0 text-emerald-700" />}
                 <button
                   type="button"
-                  onClick={() => {
-                    setScriptOpen(false);
-                    document.getElementById("dados")?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
-                  className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:underline"
+                  onClick={() => setEditingEmpresa(e)}
+                  className={
+                    "min-w-0 flex-1 truncate text-left text-[11px] font-medium hover:underline " +
+                    (done ? "text-emerald-800" : "text-navy-deep")
+                  }
                 >
-                  <span>▲</span>
-                  <span>Recolher script</span>
+                  {e.nome}
                 </button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => enviarParaPre(e)}
+                  className={
+                    "h-6 w-6 p-0 " +
+                    (done ? "text-emerald-700 hover:bg-emerald-500/20" : "text-navy-deep hover:bg-navy-deep/10")
+                  }
+                  title="Enviar para Pré-ligação"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                </Button>
+              </li>
+            );
+          })}
+          {ativas.length > 8 && (
+            <li>
+              <button
+                type="button"
+                onClick={() => navigate({ to: "/preparacao" })}
+                className="w-full rounded-md border border-dashed border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:border-navy-deep/40 hover:text-navy-deep"
+              >
+                Ver todas ({ativas.length}) →
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+
+      {seletorDialog}
+      {importDialog}
+      {cadastroDialog}
+      {editDialog}
+        {grupoDialog}
+        {pastaDialogNode}
+
+    </div>
+  );
+}
+
+function EditEmpresaDialog({
+  empresa,
+  todasEmpresas,
+  onClose,
+  onSave,
+  onRemove,
+  onSend,
+  onSwitchEmpresa,
+}: {
+  empresa: Empresa | null;
+  todasEmpresas: Empresa[];
+  onClose: () => void;
+  onSave: (patch: Empresa) => void;
+  onRemove: (id: string) => void;
+  onSend?: (item: Empresa) => void;
+  onSwitchEmpresa?: (item: Empresa) => void;
+}) {
+  const [nome, setNome] = useState("");
+  const [razaoSocial, setRazaoSocial] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [contato, setContato] = useState("");
+  const [cargo, setCargo] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [telefoneSecundario, setTelefoneSecundario] = useState("");
+  const [email, setEmail] = useState("");
+  const [emailSecundario, setEmailSecundario] = useState("");
+  const [emailCheck, setEmailCheck] = useState<ResultadoVerificacaoEmail | null>(null);
+  const [emailChecking, setEmailChecking] = useState(false);
+  const [contatosExtras, setContatosExtras] = useState<ContatoExtra[]>([]);
+  const [observacoes, setObservacoes] = useState("");
+  const [textoBruto, setTextoBruto] = useState("");
+  const [uf, setUf] = useState("");
+  const [setor, setSetor] = useState("");
+  const [regime, setRegime] = useState("");
+  // Recolhido por padrão — é o campo mais raramente reeditado depois do
+  // cadastro inicial, então não precisa ocupar 12 linhas de tela toda vez
+  // que o consultor só quer ajustar telefone/observações.
+  const [dadosBrutosAberto, setDadosBrutosAberto] = useState(false);
+
+  useEffect(() => {
+    if (!empresa) return;
+    // Preenche automaticamente o que estiver vazio a partir dos dados brutos
+    const auto = parseDadosCnpj(empresa.textoBruto ?? "");
+    setNome(empresa.nome ?? "");
+    setRazaoSocial(empresa.razaoSocial || auto.razaoSocial || "");
+    setCnpj(empresa.cnpj || auto.cnpj || "");
+    setContato(empresa.contato || auto.contato || "");
+    setCargo(empresa.cargo || auto.cargo || "");
+    setTelefone(empresa.telefone || auto.telefone || "");
+    setTelefoneSecundario(empresa.telefoneSecundario || auto.telefoneSecundario || "");
+    setEmail(empresa.email || auto.email || "");
+    setEmailSecundario(empresa.emailSecundario || auto.emailSecundario || "");
+    setEmailCheck(null);
+    setEmailChecking(false);
+    setContatosExtras(
+      empresa.contatosExtras && empresa.contatosExtras.length > 0
+        ? empresa.contatosExtras
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
+    setObservacoes(empresa.observacoes || auto.observacoes || "");
+    setTextoBruto(empresa.textoBruto ?? "");
+    setUf(empresa.uf || auto.uf || "");
+    setSetor(empresa.setor || auto.setor || "");
+    setRegime(empresa.regime || auto.regime || "");
+    setDadosBrutosAberto(false);
+  }, [empresa]);
+
+  // Ao colar/editar o texto bruto de uma empresa já existente, reprocessa e
+  // preenche apenas os campos que estiverem vazios NO MOMENTO — nunca
+  // sobrescreve o que já estiver preenchido (manual ou vindo do enriquecimento).
+  function handleTextoBrutoChange(novoTexto: string) {
+    setTextoBruto(novoTexto);
+    const auto = parseDadosCnpj(novoTexto);
+    setRazaoSocial((atual) => atual || auto.razaoSocial || atual);
+    setCnpj((atual) => atual || auto.cnpj || atual);
+    setContato((atual) => atual || auto.contato || atual);
+    setCargo((atual) => atual || auto.cargo || atual);
+    setTelefone((atual) => atual || auto.telefone || atual);
+    setTelefoneSecundario((atual) => atual || auto.telefoneSecundario || atual);
+    setEmail((atual) => atual || auto.email || atual);
+    setEmailSecundario((atual) => atual || auto.emailSecundario || atual);
+    setObservacoes((atual) => atual || auto.observacoes || atual);
+    setUf((atual) => atual || auto.uf || atual);
+    setSetor((atual) => atual || auto.setor || atual);
+    setRegime((atual) => atual || auto.regime || atual);
+    setContatosExtras((atual) =>
+      atual.length > 0
+        ? atual
+        : (auto.contatosExtras ?? []).map((c) => ({ id: newId(), nome: c.nome, cargo: c.cargo })),
+    );
+  }
+
+  function addContatoExtra() {
+    setContatosExtras((prev) => [...prev, { id: newId(), nome: "", cargo: "", telefone: "", email: "" }]);
+  }
+
+  function updateContatoExtra(id: string, patch: Partial<ContatoExtra>) {
+    setContatosExtras((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  }
+
+  function removeContatoExtra(id: string) {
+    setContatosExtras((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  const open = empresa !== null;
+
+  // Unidades do mesmo grupo econômico (mesma raiz de CNPJ) — matriz e
+  // filiais. Só aparece o bloco quando há mais de uma unidade cadastrada.
+  const unidadesGrupo = useMemo(() => {
+    const raiz = cnpjRaiz(cnpj);
+    if (!raiz) return [];
+    const irmas = todasEmpresas.filter((e) => cnpjRaiz(e.cnpj) === raiz);
+    return irmas.length > 1
+      ? [...irmas].sort((a, b) => (a.cnpj ?? "").localeCompare(b.cnpj ?? ""))
+      : [];
+  }, [cnpj, todasEmpresas]);
+
+  const labelUnidadeAtual = unidadeLabel(cnpj);
+
+  function buildPatch(): Empresa | null {
+    if (!empresa) return null;
+    const nomeFinal = nome.trim() || empresa.nome;
+    const contatosLimpos: ContatoExtra[] = contatosExtras
+      .filter(
+        (c) => (c.nome ?? "").trim() || (c.telefone ?? "").trim() || (c.email ?? "").trim() || (c.cargo ?? "").trim(),
+      )
+      .map((c) => ({
+        id: c.id,
+        nome: c.nome?.trim() || undefined,
+        cargo: c.cargo?.trim() || undefined,
+        telefone: c.telefone?.trim() || undefined,
+        email: c.email?.trim() || undefined,
+      }));
+    return {
+      ...empresa,
+      nome: nomeFinal,
+      razaoSocial: razaoSocial.trim() || undefined,
+      cnpj: cnpj.trim() || undefined,
+      contato: contato.trim() || undefined,
+      cargo: cargo.trim() || undefined,
+      telefone: telefone.trim() || undefined,
+      telefoneSecundario: telefoneSecundario.trim() || undefined,
+      email: email.trim() || undefined,
+      emailSecundario: emailSecundario.trim() || undefined,
+      contatosExtras: contatosLimpos.length ? contatosLimpos : undefined,
+      observacoes: observacoes.trim() || undefined,
+      textoBruto,
+      uf: uf.trim() || undefined,
+      setor: setor.trim() || undefined,
+      regime: regime.trim() || undefined,
+    };
+  }
+
+  function handleSave() {
+    const patch = buildPatch();
+    if (patch) onSave(patch);
+  }
+
+  function handleSaveAndSend() {
+    const patch = buildPatch();
+    if (!patch) return;
+    onSave(patch);
+    onSend?.(patch);
+  }
+
+  /** Salva as edições atuais antes de trocar a tela para outra unidade do grupo. */
+  function trocarParaUnidade(unidade: Empresa) {
+    const patch = buildPatch();
+    if (patch) onSave(patch);
+    onSwitchEmpresa?.(unidade);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            Editar empresa
+            {labelUnidadeAtual && (
+              <span className="rounded-full bg-navy-deep/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-navy-deep">
+                {labelUnidadeAtual}
+              </span>
+            )}
+          </DialogTitle>
+          <DialogDescription>
+            Ajuste os dados e envie direto ao Pré-ligação quando estiver pronto.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="mt-2 space-y-3">
+          <Field label="Nome (exibido no card)" value={nome} onChange={setNome} />
+          <Field label="Razão Social" value={razaoSocial} onChange={setRazaoSocial} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="CNPJ" value={cnpj} onChange={setCnpj} />
+            <Field label="Telefone" value={telefone} onChange={setTelefone} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Telefone secundário" value={telefoneSecundario} onChange={setTelefoneSecundario} />
+            <Field label="E-mail secundário" value={emailSecundario} onChange={setEmailSecundario} type="email" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Contato principal" value={contato} onChange={setContato} />
+            <Field label="Cargo" value={cargo} onChange={setCargo} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label className="text-[11px]">E-mail</Label>
+            <div className="flex gap-2">
+              <Input
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailCheck(null);
+                }}
+                type="email"
+                className="h-9 flex-1 text-[12px]"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0 px-2.5 text-[11px]"
+                disabled={!email.trim() || emailChecking}
+                onClick={async () => {
+                  setEmailChecking(true);
+                  setEmailCheck(null);
+                  const r = await verificarEmailDominio(email);
+                  setEmailCheck(r);
+                  setEmailChecking(false);
+                }}
+              >
+                {emailChecking ? "Verificando…" : "Verificar"}
+              </Button>
+            </div>
+            {emailCheck && (
+              <p className={"text-[11px] " + (emailCheck.valido ? "text-emerald-600" : "text-red-600")}>
+                {emailCheck.valido ? "✓ " : "⚠ "}
+                {emailCheck.motivo}
+              </p>
+            )}
+          </div>
+
+          {/* Contatos adicionais — outros sócios/pessoas de contato da mesma empresa */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Contatos adicionais {contatosExtras.length > 0 && `(${contatosExtras.length})`}
+              </Label>
+              <Button type="button" variant="outline" size="sm" className="h-7 gap-1 text-[11px]" onClick={addContatoExtra}>
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar contato
+              </Button>
+            </div>
+            {contatosExtras.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                Nenhum contato adicional. Use "Adicionar contato" se houver mais de um sócio ou pessoa de contato.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {contatosExtras.map((c) => (
+                  <div key={c.id} className="rounded-lg border border-border/50 bg-card p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Contato adicional
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                        onClick={() => removeContatoExtra(c.id)}
+                        title="Remover este contato"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        value={c.nome ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { nome: ev.target.value })}
+                        placeholder="Nome"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.cargo ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { cargo: ev.target.value })}
+                        placeholder="Cargo"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.telefone ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { telefone: ev.target.value })}
+                        placeholder="Telefone"
+                        className="h-8 text-[12px]"
+                      />
+                      <Input
+                        value={c.email ?? ""}
+                        onChange={(ev) => updateContatoExtra(c.id, { email: ev.target.value })}
+                        placeholder="E-mail"
+                        type="email"
+                        className="h-8 text-[12px]"
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-      </CardContent>
-    </Card>
+            )}
+          </div>
+
+          {/* Grupo econômico — matriz/filiais do mesmo CNPJ raiz, com atalho clicável */}
+          {unidadesGrupo.length > 0 && (
+            <div className="rounded-xl border border-navy-deep/20 bg-navy-deep/5 p-3">
+              <Label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-navy-deep">
+                Grupo econômico — {unidadesGrupo.length} unidades
+              </Label>
+              <ul className="space-y-1.5">
+                {unidadesGrupo.map((u) => {
+                  const ehAtual = u.id === empresa?.id;
+                  const detalhes = [unidadeLabel(u.cnpj), cidadeUfDoTexto(u.textoBruto), u.telefone]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        disabled={ehAtual}
+                        onClick={() => trocarParaUnidade(u)}
+                        className={
+                          "w-full rounded-lg border px-2.5 py-1.5 text-left transition " +
+                          (ehAtual
+                            ? "cursor-default border-navy-deep/40 bg-navy-deep/10"
+                            : "border-border/50 bg-card hover:border-navy-deep/40 hover:bg-primary/5")
+                        }
+                      >
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[12px] font-semibold text-navy-deep">{u.nome}</span>
+                          {unidadeLabel(u.cnpj) && (
+                            <span className="rounded-full bg-navy-deep/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-navy-deep">
+                              {unidadeLabel(u.cnpj)}
+                            </span>
+                          )}
+                          {ehAtual && (
+                            <span className="rounded-full bg-emerald-600/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                              editando agora
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {detalhes || "Sem dados adicionais"}
+                        </p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                Clique em outra unidade para abrir a edição dela (suas alterações aqui são salvas antes de trocar).
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="grid gap-1.5">
+              <Label className="text-[11px]">UF</Label>
+              <select
+                value={uf}
+                onChange={(ev) => setUf(ev.target.value)}
+                className="h-9 rounded-md border border-input bg-white px-2 text-[12px] text-navy-deep"
+              >
+                <option value="">—</option>
+                {UFS_BR.map((sigla) => (
+                  <option key={sigla} value={sigla}>{sigla}</option>
+                ))}
+              </select>
+            </div>
+            <Field label="Setor" value={setor} onChange={setSetor} />
+            <div className="grid gap-1.5">
+              <Label className="text-[11px]">Regime tributário</Label>
+              <select
+                value={regime}
+                onChange={(ev) => setRegime(ev.target.value)}
+                className="h-9 rounded-md border border-input bg-white px-2 text-[12px] text-navy-deep"
+              >
+                <option value="">—</option>
+                {REGIMES.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label className="text-[11px]">Observações</Label>
+            <Textarea
+              rows={3}
+              value={observacoes}
+              onChange={(e) => setObservacoes(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+          <div className="rounded-xl border border-border/60 bg-muted/10">
+            <button
+              type="button"
+              onClick={() => setDadosBrutosAberto((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+              title={dadosBrutosAberto ? "Recolher" : "Expandir"}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Dados brutos (texto original)
+                {!dadosBrutosAberto && textoBruto.trim() && (
+                  <span className="ml-2 normal-case tracking-normal text-muted-foreground/70">
+                    — raramente precisa reeditar isso
+                  </span>
+                )}
+              </span>
+              {dadosBrutosAberto ? (
+                <ChevronUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+            </button>
+            {dadosBrutosAberto && (
+              <div className="px-3 pb-3">
+                <Textarea
+                  rows={12}
+                  value={textoBruto}
+                  onChange={(e) => handleTextoBrutoChange(e.target.value)}
+                  className="min-h-[240px] text-sm leading-relaxed"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <DialogFooter className="mt-4 flex flex-row items-center justify-between gap-2 sm:justify-between">
+          <Button
+            type="button"
+            variant="ghost"
+            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+            onClick={() => empresa && onRemove(empresa.id)}
+          >
+            <Trash2 className="mr-1 h-4 w-4" />
+            Excluir
+          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleSave} variant="secondary">
+              <Save className="mr-1 h-4 w-4" />
+              Salvar
+            </Button>
+            {onSend && (
+              <Button
+                type="button"
+                onClick={handleSaveAndSend}
+                className="gap-1 bg-navy-deep text-white hover:bg-navy-deep/90"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                Salvar e enviar
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+/**
+ * Popover de "mudar data" com confirmação explícita — antes, a data
+ * escolhida disparava a mudança imediatamente no onChange do calendário,
+ * o que fazia um toque errado no celular já mover a empresa sem querer.
+ * Agora escolher a data só atualiza o campo; é preciso clicar em confirmar.
+ */
+function MudarDataPopover({
+  dataAtual,
+  onConfirmar,
+}: {
+  dataAtual: string;
+  onConfirmar: (novaData: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [dataEscolhida, setDataEscolhida] = useState(dataAtual);
+
+  return (
+    <Popover
+      open={aberto}
+      onOpenChange={(v) => {
+        setAberto(v);
+        if (v) setDataEscolhida(dataAtual);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 w-8 rounded-lg p-0 text-hub-muted hover:bg-hub-raised hover:text-hub-text"
+          title="Mudar data"
+        >
+          <CalendarDays className="h-3.5 w-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto border-hub-line bg-hub-surface p-2">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hub-muted">
+          Mover para outro dia
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Input
+            type="date"
+            value={dataEscolhida}
+            onChange={(ev) => setDataEscolhida(ev.target.value)}
+            className="h-8 w-[135px] border-hub-line bg-hub-bg text-[11px] text-hub-text [color-scheme:dark]"
+          />
+          <Button
+            size="sm"
+            disabled={!dataEscolhida || dataEscolhida === dataAtual}
+            onClick={() => {
+              onConfirmar(dataEscolhida);
+              setAberto(false);
+            }}
+            title="Confirmar nova data"
+            className="h-8 shrink-0 gap-1 bg-hub-gold px-2.5 text-[11px] font-bold text-hub-gold-ink hover:bg-hub-gold/90"
+          >
+            <Check className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  type,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label className="text-[11px]">{label}</Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={type ?? "text"}
+        className="h-9 text-[12px]"
+      />
+    </div>
+  );
+}
+
+
+/** Linha arrastável da lista de empresas (ordem manual da noite). */
+function SortableEmpresaRow({
+  id,
+  className,
+  children,
+}: {
+  id: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={className + (isDragging ? " opacity-60" : "")}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab touch-none rounded-lg p-2 -ml-1.5 text-muted-foreground hover:bg-hub-raised hover:text-navy-deep active:cursor-grabbing"
+        title="Arraste para reordenar"
+        aria-label="Reordenar empresa"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      <span className="mr-1 h-6 w-px shrink-0 bg-hub-line/40" aria-hidden="true" />
+      {children}
+    </li>
+  );
+}
+
+/** Linha arrastável da lista de Pastas na barra lateral — mesmo padrão do menu "PROSPECTAR". */
+function SortablePastaRow({
+  id,
+  className,
+  children,
+}: {
+  id: string;
+  className: string;
+  children: ReactNode;
+}) {
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={className + (isDragging ? " opacity-60" : "")}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 cursor-grab touch-none rounded p-1 pl-2 text-hub-muted hover:text-hub-text active:cursor-grabbing"
+        title="Arraste para reordenar"
+        aria-label="Reordenar pasta"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      {children}
+    </div>
   );
 }
