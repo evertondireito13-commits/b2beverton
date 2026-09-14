@@ -249,6 +249,14 @@ export function PreLigacao({
   const [loadingGen, setLoadingGen] = useState(false);
   const [searchMode, setSearchMode] = useState<"cnpj" | "nome">("cnpj");
   const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
+  // ---- Dados de confirmação da reunião (preenchidos no card "Fechou! Confirmar
+  // horário" do Fluxo da ligação) — persistidos no rascunho local da Pré-ligação
+  // igual aos demais campos, pra sobreviver a troca de aba/reload. ----
+  const [reuniaoNome, setReuniaoNome] = useState((pre0 as Record<string, string>).reuniaoNome ?? "");
+  const [reuniaoFuncao, setReuniaoFuncao] = useState((pre0 as Record<string, string>).reuniaoFuncao ?? "");
+  const [reuniaoEmail, setReuniaoEmail] = useState((pre0 as Record<string, string>).reuniaoEmail ?? "");
+  const [reuniaoData, setReuniaoData] = useState((pre0 as Record<string, string>).reuniaoData ?? "");
+  const [reuniaoHora, setReuniaoHora] = useState((pre0 as Record<string, string>).reuniaoHora ?? "");
   const [modoEsteira, setModoEsteira] = useState<boolean>(true);
   const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
   // ---- Estado do fluxo de cards de "Contornar objeções" (Pré-ligação) ----
@@ -389,9 +397,22 @@ export function PreLigacao({
 
   // Autosave: rascunho unificado + sessão ativa v2
   useEffect(() => {
-    updateRascunho({ pre: { cnpj, dados, script, empresaResumo, nomeBusca } });
+    updateRascunho({
+      pre: {
+        cnpj,
+        dados,
+        script,
+        empresaResumo,
+        nomeBusca,
+        reuniaoNome,
+        reuniaoFuncao,
+        reuniaoEmail,
+        reuniaoData,
+        reuniaoHora,
+      } as Record<string, unknown>,
+    });
     updateSessaoAtiva({ cnpj, dados, script, empresaResumo });
-  }, [cnpj, dados, script, empresaResumo, nomeBusca]);
+  }, [cnpj, dados, script, empresaResumo, nomeBusca, reuniaoNome, reuniaoFuncao, reuniaoEmail, reuniaoData, reuniaoHora]);
 
   function limparRascunhoPre() {
     setCnpj("");
@@ -402,7 +423,25 @@ export function PreLigacao({
     setNomeBusca("");
     setResultados([]);
     setTelefones(null);
-    updateRascunho({ pre: { cnpj: "", dados: "", script: "", empresaResumo: null, nomeBusca: "" } });
+    setReuniaoNome("");
+    setReuniaoFuncao("");
+    setReuniaoEmail("");
+    setReuniaoData("");
+    setReuniaoHora("");
+    updateRascunho({
+      pre: {
+        cnpj: "",
+        dados: "",
+        script: "",
+        empresaResumo: null,
+        nomeBusca: "",
+        reuniaoNome: "",
+        reuniaoFuncao: "",
+        reuniaoEmail: "",
+        reuniaoData: "",
+        reuniaoHora: "",
+      } as Record<string, unknown>,
+    });
     updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
   }
 
@@ -919,9 +958,47 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       if (idx !== -1) return prev.slice(0, idx + 1);
       return [...prev, id];
     });
+    // A partir do momento em que o operador navega ativamente pelo Fluxo da
+    // ligação, o bloco "Script gerado" (passo 3) vira informação redundante
+    // na tela — recolhe automaticamente pra liberar espaço. Continua acessível
+    // pelo toggle "▼ Script gerado" a qualquer momento.
+    setScriptOpen(false);
     setTimeout(() => {
       document.getElementById(`objecao-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 60);
+  }
+
+  // Pré-preenche os dados de confirmação da reunião a partir do contato já
+  // identificado (ex: "Rafaela (Assistente Financeiro)") assim que o operador
+  // chega no card de fechamento — só quando o campo ainda está vazio, pra
+  // nunca sobrescrever o que o operador já digitou.
+  useEffect(() => {
+    if (activeStep !== "fechamento" || reuniaoNome) return;
+    const contato = currentLeadState?.contatoNome?.trim();
+    if (!contato) return;
+    const match = contato.match(/^(.*?)\s*\((.*)\)\s*$/);
+    if (match) {
+      setReuniaoNome(match[1].trim());
+      if (!reuniaoFuncao) setReuniaoFuncao(match[2].trim());
+    } else {
+      setReuniaoNome(contato);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStep]);
+
+  async function copyResumoReuniao() {
+    const empresa = currentLeadState?.razaoSocial ?? empresaResumo ?? "Empresa";
+    const linhas = [
+      `Empresa: ${empresa}`,
+      reuniaoNome && `Contato: ${reuniaoNome}`,
+      reuniaoFuncao && `Função: ${reuniaoFuncao}`,
+      reuniaoEmail && `E-mail: ${reuniaoEmail}`,
+      (reuniaoData || reuniaoHora)
+        ? `Reunião: ${reuniaoData || "(data a definir)"}${reuniaoHora ? ` às ${reuniaoHora}` : ""}`
+        : "",
+    ].filter(Boolean).join("\n");
+    await navigator.clipboard.writeText(linhas);
+    toast.success("Resumo da reunião copiado");
   }
 
   function fecharStep() {
@@ -1702,6 +1779,92 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                         {r.label}
                       </Button>
                     ))}
+                  </div>
+                )}
+
+                {cardAtivo.id === "fechamento" && (
+                  <div className="mt-3 border-t border-emerald-300/60 pt-3 dark:border-emerald-900/60">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                      Dados para agendar a reunião
+                    </p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <Label htmlFor="reuniao-nome" className="text-[11px]">
+                          Nome do contato
+                        </Label>
+                        <Input
+                          id="reuniao-nome"
+                          value={reuniaoNome}
+                          onChange={(e) => setReuniaoNome(e.target.value)}
+                          placeholder="Ex: Everton Pereira"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="reuniao-funcao" className="text-[11px]">
+                          Função / Cargo
+                        </Label>
+                        <Input
+                          id="reuniao-funcao"
+                          value={reuniaoFuncao}
+                          onChange={(e) => setReuniaoFuncao(e.target.value)}
+                          placeholder="Ex: Sócio-Administrador"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="reuniao-email" className="text-[11px]">
+                          E-mail
+                        </Label>
+                        <Input
+                          id="reuniao-email"
+                          type="email"
+                          value={reuniaoEmail}
+                          onChange={(e) => setReuniaoEmail(e.target.value)}
+                          placeholder="nome@empresa.com.br"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label htmlFor="reuniao-data" className="text-[11px]">
+                            Data da reunião
+                          </Label>
+                          <Input
+                            id="reuniao-data"
+                            type="date"
+                            value={reuniaoData}
+                            onChange={(e) => setReuniaoData(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="reuniao-hora" className="text-[11px]">
+                            Horário
+                          </Label>
+                          <Input
+                            id="reuniao-hora"
+                            type="time"
+                            value={reuniaoHora}
+                            onChange={(e) => setReuniaoHora(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mt-2 h-7 text-[11px]"
+                      onClick={copyResumoReuniao}
+                    >
+                      <Copy className="mr-1 h-3 w-3" />
+                      Copiar resumo da reunião
+                    </Button>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Fica salvo automaticamente aqui (sobrevive a troca de aba/reload). Use o resumo pra
+                      registrar no Pós-ligação ou na Central de Reuniões.
+                    </p>
                   </div>
                 )}
 
