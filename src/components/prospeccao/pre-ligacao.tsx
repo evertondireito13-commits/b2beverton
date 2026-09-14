@@ -1128,10 +1128,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     return todosOsCardsObjecao.find((c) => c.id === id) ?? null;
   }
   const cardAtivo = activeStep ? cardById(activeStep) : null;
-  // Todos os outros nós que dá pra seguir a partir de onde a conversa está
-  // agora — objeções (menos a atual) e a própria Abertura, pra reabrir a
-  // linha de abertura se a ligação "reiniciar" (ex: caiu e ligou de novo).
-  const outrosRumos = [abertura, ...objecoes].filter((c) => c.id !== activeStep);
 
   return (
 
@@ -1904,7 +1900,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
                 {cardAtivo.kind !== "terminal" && (
                   <div className="mt-3 border-t border-border/60 pt-2">
-                    <div className="mb-1.5 flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5">
                       <Button
                         size="sm"
                         variant="secondary"
@@ -1923,26 +1919,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                         <LogOut className="mr-1 h-3 w-3" />
                         Não quis, encerrar
                       </Button>
-                    </div>
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                      Ou a conversa foi pra outro lado
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {outrosRumos.map((r) => {
-                        const Icon = r.icon;
-                        return (
-                          <Button
-                            key={r.id}
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-[11px]"
-                            onClick={() => irParaStep(r.id)}
-                          >
-                            <Icon className="mr-1 h-3 w-3" />
-                            {r.label}
-                          </Button>
-                        );
-                      })}
                     </div>
                   </div>
                 )}
