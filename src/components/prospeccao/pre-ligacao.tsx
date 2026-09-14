@@ -182,6 +182,77 @@ const aiCache = new Map<string, string>();
 // o script sem alterar os dados da empresa).
 const contactNameCache = new Map<string, string>();
 
+// ---- Etapa 4: Cards de contorno de objeções ----
+// Estrutura simples: rótulo curto (o que aparece no botão) + resposta com
+// tags {NOME} / {SEGMENTO} / {INSUMOS} / {CIDADE_ESTADO}, preenchidas na hora
+// com os mesmos dados que já alimentam o script (sem gastar IA de novo).
+// Pra adicionar uma nova objeção, basta acrescentar um item aqui.
+type Objecao = {
+  id: string;
+  label: string;
+  resposta: string;
+};
+
+const OBJECOES: Objecao[] = [
+  {
+    id: "ja_tem_contador",
+    label: "Já tem contador/consultoria",
+    resposta:
+      "Entendo, {NOME}! Faz todo sentido, e a ideia não é substituir o que vocês já têm — é justamente somar. Muita empresa do segmento de {SEGMENTO} acaba descobrindo economia extra especificamente na parte de {INSUMOS}, que às vezes passa batido mesmo com um bom contador, porque é um ponto bem específico da operação. Numa conversa de uns 10 minutos eu já te mostro se faz sentido seguir ou não, sem custo e sem compromisso.",
+  },
+  {
+    id: "manda_email",
+    label: "Pede para mandar por e-mail",
+    resposta:
+      "Consigo sim, {NOME}! Só que o material sozinho, sem eu te explicar, normalmente não diz muita coisa, porque o ganho é bem específico pro caso de vocês aí em {CIDADE_ESTADO}. Que tal eu te mostrar rapidinho, uns 10 minutinhos, e depois já te mando tudo por e-mail com o resumo do que a gente viu?",
+  },
+  {
+    id: "sem_tempo",
+    label: "Sem tempo agora / corrido",
+    resposta:
+      "Sem problema nenhum, {NOME}, imagino a correria aí. Posso te ligar num momento melhor pra você — amanhã de manhã ou à tarde, por exemplo? É rapidinho, só pra ver se faz sentido pra vocês.",
+  },
+  {
+    id: "nao_decide",
+    label: "Não decide sozinho(a)",
+    resposta:
+      "Perfeito, {NOME}, faz todo sentido. Posso já incluir quem decide na conversa, ou te passar o material pra você levar internamente — o que for melhor pra você. O importante é conseguirmos mostrar rapidinho onde pode estar a economia em {SEGMENTO}.",
+  },
+  {
+    id: "sem_interesse",
+    label: "Não tem interesse",
+    resposta:
+      "Tudo bem, {NOME}, sem problema nenhum. Só pra eu entender melhor: é porque já resolveram esse ponto de {INSUMOS} de outra forma, ou é mais questão de timing agora? Se for timing, posso te procurar num momento melhor.",
+  },
+  {
+    id: "ligar_depois",
+    label: "Pede para ligar depois",
+    resposta:
+      "Combinado, {NOME}! Qual seria o melhor horário pra eu te ligar de novo — amanhã de manhã ou à tarde? Só pra eu já anotar aqui e não te pegar num momento ruim.",
+  },
+  {
+    id: "quanto_custa",
+    label: "Pergunta quanto custa",
+    resposta:
+      "Boa pergunta, {NOME}! Essa primeira conversa, de uns 10 minutos, é sem custo e sem compromisso — é justamente pra vermos juntos se existe economia real pra vocês antes de falar de qualquer valor. Faz sentido eu te mostrar rapidinho?",
+  },
+];
+
+/** Preenche as tags de uma resposta de objeção com os dados já disponíveis na tela. */
+function preencherTagsObjecao(
+  template: string,
+  nome: string,
+  segmento: string,
+  insumos: string,
+  cidadeEstado: string,
+) {
+  return template
+    .replace(/\{NOME\}/g, nome?.trim() || "tudo bem?")
+    .replace(/\{SEGMENTO\}/g, segmento?.trim() || "seu segmento")
+    .replace(/\{INSUMOS\}/g, insumos?.trim() || "os insumos usados na produção")
+    .replace(/\{CIDADE_ESTADO\}/g, cidadeEstado?.trim() || "aí na região");
+}
+
 export function PreLigacao({
   promptText,
 }: {
@@ -204,6 +275,12 @@ export function PreLigacao({
   // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
   // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
+  // Etapa 4 — Cards de contorno de objeções: quais estão expandidos no
+  // momento (pode ter mais de um aberto ao mesmo tempo) e o nome do contato
+  // já extraído por IA (o mesmo nome que aparece no script), reaproveitado
+  // aqui pra preencher as respostas sem gastar crédito de IA de novo.
+  const [objecoesAbertas, setObjecoesAbertas] = useState<Set<string>>(new Set());
+  const [nomeContatoExtraido, setNomeContatoExtraido] = useState<string>("tudo bem?");
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // Referência do bloco de script gerado — usada para rolar a tela até ele
   // assim que a compilação/geração termina (o operador pode estar com a tela
@@ -229,11 +306,12 @@ export function PreLigacao({
 
       // NOVA EMPRESA vinda do Preparação Noturna: limpa TUDO da empresa
       // anterior (CNPJ, dados colados, script compilado, resultados de
-      // busca, telefones, lead ativo, modo contingência) antes de aplicar os
-      // dados da nova empresa — evita ficar "dado em cima de dado" na tela.
-      // Também zera o "dirty flag": sem isso, se o operador tivesse editado
-      // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
-      // impediria os dados da nova empresa de aparecerem.
+      // busca, telefones, lead ativo, modo contingência, cards de objeção
+      // abertos e nome extraído) antes de aplicar os dados da nova empresa —
+      // evita ficar "dado em cima de dado" na tela. Também zera o "dirty
+      // flag": sem isso, se o operador tivesse editado manualmente os dados
+      // da empresa anterior, a proteção anti-sobrescrita impediria os dados
+      // da nova empresa de aparecerem.
       limparRascunhoPre();
       clearRascunho(); // garante que o rascunho da Pós-ligação também é limpo,
                         // mesmo que aquela aba não esteja montada agora
@@ -331,6 +409,8 @@ export function PreLigacao({
     setNomeBusca("");
     setResultados([]);
     setTelefones(null);
+    setObjecoesAbertas(new Set());
+    setNomeContatoExtraido("tudo bem?");
     updateRascunho({ pre: { cnpj: "", dados: "", script: "", empresaResumo: null, nomeBusca: "" } });
     updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
   }
@@ -587,6 +667,7 @@ export function PreLigacao({
       const parsedLead = parseLeadFromDados(dados, cnpj);
       const leadBase = parsedLead ?? currentLeadState ?? montarLeadFallback(dados, cnpj, empresaResumo);
       const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
+      setNomeContatoExtraido(nomeContatoIA);
       const lead = { ...leadBase, contatoNome: nomeContatoIA };
       setCurrentLeadState(lead);
       setActiveLead(lead);
@@ -725,6 +806,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       setLoadingGen(true);
       try {
         const nomeContatoIA = await extrairNomeContatoComIA(dados.trim());
+        setNomeContatoExtraido(nomeContatoIA);
         const leadComContato = { ...lead, contatoNome: nomeContatoIA };
         setCurrentLeadState(leadComContato);
         setActiveLead(leadComContato);
@@ -805,6 +887,33 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     window.addEventListener(ACTIVE_LEAD_EVENT, onLead);
     return () => window.removeEventListener(ACTIVE_LEAD_EVENT, onLead);
   }, [cnpj]);
+
+  // Etapa 4 — valores usados pra preencher as respostas de objeção: o
+  // segmento/insumos vêm da mesma inferência por CNAE usada no script, e a
+  // cidade/estado vêm do lead carregado. Recalcula sozinho sempre que o lead
+  // ou os dados colados mudam — tudo local, sem gastar IA.
+  const valoresObjecao = useMemo(() => {
+    const cnaeTexto = `${currentLeadState?.cnaePrincipal ?? ""}\n${dados}`;
+    const inferido = inferirSegmentoPorCnae(cnaeTexto);
+    const cidadeEstado =
+      currentLeadState?.cidade && currentLeadState?.uf
+        ? `${currentLeadState.cidade}/${currentLeadState.uf}`
+        : "aí na região";
+    return {
+      segmento: inferido.segmento,
+      insumos: inferido.insumos,
+      cidadeEstado,
+    };
+  }, [currentLeadState, dados]);
+
+  function toggleObjecao(id: string) {
+    setObjecoesAbertas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   return (
 
@@ -1287,6 +1396,95 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               </div>
             </CollapsibleContent>
           </Collapsible>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+            4
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Contornar objeções
+          </span>
+          {objecoesAbertas.size > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => setObjecoesAbertas(new Set())}
+            >
+              Fechar todos
+            </Button>
+          )}
+        </div>
+
+        <p className="text-[11px] text-muted-foreground">
+          Clique na objeção que a pessoa deu — a resposta pronta abre na hora, sem precisar rolar até o script.
+        </p>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {OBJECOES.map((obj) => {
+            const aberto = objecoesAbertas.has(obj.id);
+            return (
+              <button
+                key={obj.id}
+                type="button"
+                onClick={() => toggleObjecao(obj.id)}
+                className={`rounded-lg border px-3 py-2 text-left text-xs font-medium transition-all ${
+                  aberto
+                    ? "border-primary bg-primary/10 text-primary ring-1 ring-primary/30"
+                    : "border-input bg-muted/30 text-foreground hover:border-primary/40 hover:bg-primary/5"
+                }`}
+              >
+                {obj.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {objecoesAbertas.size > 0 && (
+          <div className="space-y-2">
+            {OBJECOES.filter((obj) => objecoesAbertas.has(obj.id)).map((obj) => {
+              const texto = preencherTagsObjecao(
+                obj.resposta,
+                nomeContatoExtraido,
+                valoresObjecao.segmento,
+                valoresObjecao.insumos,
+                valoresObjecao.cidadeEstado,
+              );
+              return (
+                <div
+                  key={obj.id}
+                  className="rounded-md border border-primary/30 bg-primary/5 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-primary">{obj.label}</span>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(texto);
+                          toast.success("Resposta copiada");
+                        }}
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        Copiar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => toggleObjecao(obj.id)}
+                      >
+                        Fechar
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{texto}</p>
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>
