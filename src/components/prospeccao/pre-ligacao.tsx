@@ -822,7 +822,33 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         <CardTitle className="font-display text-base tracking-wide text-white sm:text-lg">
           Pré-ligação · Script de abordagem
         </CardTitle>
-        <div className="flex items-center justify-between gap-3 sm:justify-end" />
+        <div className="flex items-center justify-between gap-3 sm:justify-end">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-white/80 hover:bg-white/10 hover:text-white"
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Limpar tudo
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Limpar tudo?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Isso vai apagar o CNPJ, os dados da empresa, o script gerado e o lead ativo desta tela para começar uma nova prospecção do zero. Essa ação não pode ser desfeita.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={limparTudo}>Limpar tudo</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3 p-4 sm:p-6">
 
@@ -1197,7 +1223,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
                 {script}
               </pre>
-              <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+              <div className="mt-3 flex items-center justify-center border-t pt-3">
                 <button
                   type="button"
                   onClick={() => {
@@ -1209,16 +1235,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   <span>▲</span>
                   <span>Recolher script</span>
                 </button>
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="ghost" onClick={downloadScript}>
-                    <Download className="mr-1 h-3 w-3" />
-                    Baixar
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={copyScript}>
-                    <Copy className="mr-1 h-3 w-3" />
-                    Copiar
-                  </Button>
-                </div>
               </div>
             </CollapsibleContent>
           </Collapsible>
