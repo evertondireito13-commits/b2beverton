@@ -370,6 +370,10 @@ type SegmentoInfo = {
   segmento: string;
   insumos: string;
   benchmark: string;
+  // Frase curta usada na tag {EXEMPLO_SEGMENTO} do script (seção de objeção
+  // "já tenho contador/fiscal"). Cada segmento tem a sua, batendo com o
+  // exemplo real de oportunidade encontrada naquele tipo de indústria.
+  exemploSegmento: string;
 };
 
 function extrairDivisaoCnae(textoBruto?: string): string {
@@ -405,6 +409,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       segmento: "Metalurgia e Metalmecânica",
       insumos: "eletrodos de solda, discos de corte abrasivos e rebolos de desbaste",
       benchmark: "Caldeiraria, Usinagem e Estruturas Metálicas",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em eletrodos de solda e discos de corte que já tinham sido classificados como uso e consumo padrão.",
     };
   }
 
@@ -414,6 +420,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       segmento: "Móveis e Artefatos de Madeira",
       insumos: "lixas industriais, brocas de vídea e colas estruturais",
       benchmark: "Fabricação de Móveis e Artefatos de Madeira",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em lixas industriais e colas estruturais que ninguém tinha reavaliado.",
     };
   }
 
@@ -424,6 +432,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       insumos:
         "resinas termoplásticas, pigmentos industriais, matrizes de injeção e componentes de desgaste de moldes",
       benchmark: "Indústria de Injeção e Artefatos Plásticos",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em resinas termoplásticas e componentes de moldes que já estavam classificados como consumo padrão.",
     };
   }
   // Alimentos e Bebidas (Grupos 10, 11 e 12)
@@ -433,6 +443,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       insumos:
         "fluidos hidráulicos protetivos, amônia para refrigeração de processo e esteiras de lavagem",
       benchmark: "Frigoríficos e Abatedouros",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em amônia de refrigeração e fluidos hidráulicos que passaram batido na primeira revisão.",
     };
   }
   // Têxtil e Confecção (Grupos 13 e 14)
@@ -441,6 +453,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       segmento: "Têxtil",
       insumos: "agulhas de tecelagem, corantes industriais e óleos de tear",
       benchmark: "Fiação e Tecelagem",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em corantes industriais e óleos de tear que ninguém tinha reavaliado.",
     };
   }
   // Celulose e Papel (Grupo 17)
@@ -449,6 +463,23 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
       segmento: "Celulose e Papel",
       insumos: "facas do picador de madeira, telas formadoras e feltros de prensa",
       benchmark: "Fabricação de Papel e Papelão Ondulado",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em telas formadoras e feltros de prensa que já estavam classificados como uso e consumo padrão.",
+    };
+  }
+  // Transporte e Logística (Divisões CNAE 49 a 53: transporte terrestre,
+  // aquaviário, aéreo, armazenagem e correio) — adicionado a pedido do
+  // Everton, que prospecta transportadoras com frequência.
+  if (
+    ["49", "50", "51", "52", "53"].includes(divisaoCnae) ||
+    /\b(transportador[ae]|transporte\s+de\s+cargas?|logistic[ao]|frete|frota|caminh(?:ao|oes)|carreta|armazenagem)\b/.test(texto)
+  ) {
+    return {
+      segmento: "Transporte e Logística",
+      insumos: "peças de reposição para frota, pneus e lubrificantes automotivos",
+      benchmark: "Transporte Rodoviário de Cargas",
+      exemploSegmento:
+        "Num caso parecido, encontramos oportunidade em pneus e lubrificantes de frota que ninguém tinha reavaliado.",
     };
   }
 
@@ -457,6 +488,8 @@ export function inferirSegmentoPorCnae(cnaeString?: string): SegmentoInfo {
     segmento: "Industrial",
     insumos: "partes, peças de reposição e componentes de desgaste operacional",
     benchmark: "indústria similar da mesma região",
+    exemploSegmento:
+      "Num caso parecido, encontramos oportunidade em peças de reposição e óleos industriais que já estavam classificados como consumo padrão.",
   };
 }
 
@@ -743,12 +776,17 @@ export function preencherTagsDoScript(texto: string, lead: ActiveLeadData, dados
     .replace(/\{\s*CIDADE\s*\}/gi, cidade)
     .replace(/\{\s*SEGMENTO\s*\}/gi, mapping.segmento)
     .replace(/\{\s*INSUMOS\s*\}/gi, mapping.insumos)
+    // {EXEMPLO_SEGMENTO}: usada na seção de objeção "já tenho contador/fiscal".
+    // Antes desta correção, o Modo Esteira não conhecia essa tag e a deixava
+    // sem substituir. Agora resolve pra frase certa do segmento identificado.
+    .replace(/\{\s*EXEMPLO_SEGMENTO\s*\}/gi, mapping.exemploSegmento)
     .replace(/\{\s*EMPRESA\s*\}/gi, nomeEmpresa)
     .replace(/\[\s*NOME\s*\]/gi, nomeContato)
     .replace(/\[\s*CIDADE_ESTADO\s*\]/gi, cidadeEstado)
     .replace(/\[\s*CIDADE\s*\]/gi, cidade)
     .replace(/\[\s*SEGMENTO\s*\]/gi, mapping.segmento)
     .replace(/\[\s*INSUMOS\s*\]/gi, mapping.insumos)
+    .replace(/\[\s*EXEMPLO_SEGMENTO\s*\]/gi, mapping.exemploSegmento)
     .replace(/\[\s*EMPRESA\s*\]/gi, nomeEmpresa);
 
   if (nomeContato.toLowerCase() === "tudo bem?") return preenchido;
@@ -877,4 +915,3 @@ export function parseLeadFromDados(texto: string, cnpjInput?: string): ActiveLea
     contatoNome: undefined,
   };
 }
-
