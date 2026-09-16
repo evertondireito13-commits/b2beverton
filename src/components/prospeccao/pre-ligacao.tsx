@@ -119,6 +119,7 @@ import {
   LogOut,
   MessageCircle,
   ArrowRight,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -247,7 +248,6 @@ export function PreLigacao({
   const [empresaResumo, setEmpresaResumo] = useState<string | null>(sess0.empresaResumo ?? pre0.empresaResumo ?? null);
   const [loadingCnpj, setLoadingCnpj] = useState(false);
   const [loadingGen, setLoadingGen] = useState(false);
-  const [searchMode, setSearchMode] = useState<"cnpj" | "nome">("cnpj");
   const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
   // ---- Dados de confirmação da reunião (preenchidos no card "Fechou! Confirmar
   // horário" do Fluxo da ligação) — persistidos no rascunho local da Pré-ligação
@@ -673,7 +673,6 @@ export function PreLigacao({
     // Se o usuário colou um CNPJ aqui, faz o lookup direto
     const digits = termo.replace(/\D/g, "");
     if (digits.length === 14) {
-      setSearchMode("cnpj");
       setCnpj(digits);
       await handleLookup(digits);
       return;
@@ -689,7 +688,6 @@ export function PreLigacao({
       // Se só veio 1 resultado, já carrega os dados completos automaticamente
       if (r.itens.length === 1) {
         const unico = r.itens[0];
-        setSearchMode("cnpj");
         setCnpj(unico.cnpj);
         await handleLookup(unico.cnpj);
         return;
@@ -1222,127 +1220,85 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         )}
 
         <div className="space-y-2">
-          <div className="inline-flex w-full rounded-lg border border-input bg-muted/40 p-1 text-xs">
-            <button
-              type="button"
-              onClick={() => setSearchMode("cnpj")}
-              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "cnpj" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              CNPJ
-            </button>
-            <button
-              type="button"
-              onClick={() => setSearchMode("nome")}
-              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "nome" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              Razão social
-            </button>
-          </div>
-
-          {searchMode === "cnpj" ? (
-            <div>
-              <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                <Label htmlFor="cnpj" className="text-xs">
-                  Buscar por CNPJ (BrasilAPI)
-                </Label>
-              </div>
-
-              <div className="mt-1 flex gap-2">
-                <Input
-                  id="cnpj"
-                  placeholder="00.000.000/0000-00 ou só números"
-                  value={cnpj}
-                  onChange={(e) => setCnpj(e.target.value.replace(/[^\d./-]/g, ""))}
-                  onPaste={(e) => {
-                    const pasted = e.clipboardData.getData("text");
-                    const cleaned = pasted.replace(/[^\d]/g, "");
-                    if (cleaned.length >= 8) {
-                      e.preventDefault();
-                      setCnpj(cleaned);
-                    }
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && handleLookup()}
-                />
-                <Button
-                  onClick={() => handleLookup()}
-                  disabled={loadingCnpj}
-                  variant="secondary"
-                  aria-label="Buscar CNPJ"
+          {/* Campo único: cola/digita CNPJ OU razão social/nome fantasia/sócio
+              na mesma linha. handleBuscaNome() já detecta sozinho se o texto
+              é um CNPJ completo (14 dígitos) e roteia pro lookup certo — não
+              precisa mais de abas separadas "CNPJ" / "Razão social". */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="busca-empresa"
+              value={nomeBusca}
+              onChange={(e) => setNomeBusca(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
+              placeholder="Pesquisar CNPJ, razão social, nome fantasia ou sócio"
+              className="h-11 pl-9 pr-20 text-sm"
+            />
+            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              {nomeBusca && !loadingBusca && !loadingCnpj && (
+                <button
+                  type="button"
+                  onClick={() => setNomeBusca("")}
+                  aria-label="Limpar busca"
+                  className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
-                  {loadingCnpj ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Search className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <Label htmlFor="nome-busca" className="text-xs">
-                Buscar por nome fantasia ou razão social
-              </Label>
-              <div className="mt-1 flex gap-2">
-                <Input
-                  id="nome-busca"
-                  placeholder="Ex.: Padaria do João, Construtora ABC…"
-                  value={nomeBusca}
-                  onChange={(e) => setNomeBusca(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
-                />
-                <Button
-                  onClick={handleBuscaNome}
-                  disabled={loadingBusca}
-                  variant="secondary"
-                  aria-label="Buscar por nome"
-                >
-                  {loadingBusca ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Search className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Busca via CNPJá. Clique em um resultado para carregar os dados completos.
-              </p>
-
-              {resultados.length > 0 && (
-                <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
-                  {resultados.map((m) => (
-                    <li key={m.cnpj}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSearchMode("cnpj");
-                          setCnpj(m.cnpj);
-                          handleLookup(m.cnpj);
-                        }}
-                        className="w-full cursor-pointer rounded border border-transparent p-2 text-left text-xs transition hover:border-primary/40 hover:bg-primary/5"
-                      >
-                        <div className="font-medium">
-                          {m.razaoSocial}
-                          {m.nomeFantasia && (
-                            <span className="text-muted-foreground"> · {m.nomeFantasia}</span>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {m.cnpjFormatado}
-                          {m.tipo && ` · ${m.tipo}`}
-                          {m.situacao && ` · ${m.situacao}`}
-                          {m.cidadeUf && ` · ${m.cidadeUf}`}
-                        </div>
-                        {m.atividade && (
-                          <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-                            {m.atividade}
-                          </div>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-8 px-2.5"
+                onClick={handleBuscaNome}
+                disabled={loadingBusca || loadingCnpj}
+                aria-label="Buscar"
+              >
+                {loadingBusca || loadingCnpj ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+              </Button>
             </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            CNPJ completo busca direto na BrasilAPI · nome, fantasia ou sócio busca via CNPJá.
+          </p>
+
+          {resultados.length > 0 && (
+            <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
+              {resultados.map((m) => (
+                <li key={m.cnpj}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCnpj(m.cnpj);
+                      handleLookup(m.cnpj);
+                    }}
+                    className="w-full cursor-pointer rounded border border-transparent p-2 text-left text-xs transition hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    <div className="font-medium">
+                      {m.razaoSocial}
+                      {m.nomeFantasia && (
+                        <span className="text-muted-foreground"> · {m.nomeFantasia}</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {m.cnpjFormatado}
+                      {m.tipo && ` · ${m.tipo}`}
+                      {m.situacao && ` · ${m.situacao}`}
+                      {m.cidadeUf && ` · ${m.cidadeUf}`}
+                    </div>
+                    {m.atividade && (
+                      <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                        {m.atividade}
+                      </div>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
 
           {empresaResumo && (
