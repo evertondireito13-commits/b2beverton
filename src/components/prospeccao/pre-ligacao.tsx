@@ -280,6 +280,11 @@ export function PreLigacao({
   // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
   // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
+  // "Conferir dados" (passo 2) só precisa ficar aberto quando os dados vieram
+  // de uma busca crua na API (BrasilAPI/CNPJá) — aí sim o operador precisa
+  // olhar e confirmar se é a empresa certa. Quando os dados já vêm prontos da
+  // Preparação Noturna (já conferidos antes), o passo começa recolhido.
+  const [conferirDadosOpen, setConferirDadosOpen] = useState<boolean>(true);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // Referência do bloco de script gerado — usada para rolar a tela até ele
   // assim que a compilação/geração termina (o operador pode estar com a tela
@@ -342,6 +347,9 @@ export function PreLigacao({
       else if (texto && dadosDirtyRef.current) {
         toast.info("Mantendo suas edições no campo 'Dados da empresa'.");
       }
+      // Dados vindos da Preparação Noturna já foram conferidos antes —
+      // não precisa reabrir o passo "Conferir dados" por padrão.
+      if (texto) setConferirDadosOpen(false);
       const nomePrincipal = razaoSocial || nome;
       if (cnpjDigits) setCnpj(cnpjDigits);
       if (nomePrincipal) {
@@ -432,6 +440,7 @@ export function PreLigacao({
     setReuniaoEmail("");
     setReuniaoData("");
     setReuniaoHora("");
+    setConferirDadosOpen(true);
     updateRascunho({
       pre: {
         cnpj: "",
@@ -563,6 +572,9 @@ export function PreLigacao({
         .join("\n");
       if (!dadosDirtyRef.current) {
         setDados(bloco);
+        // Dados crus vindos direto da API: precisa que o operador olhe e
+        // confirme se é a empresa certa antes de compilar o script.
+        setConferirDadosOpen(true);
       } else {
         toast.info("Mantendo suas edições no campo 'Dados da empresa' (busca automática não sobrescreveu).");
       }
@@ -605,6 +617,8 @@ export function PreLigacao({
         || /rate.?limit|too many|timeout|network|fetch|failed to fetch|econnreset|enotfound/i.test(msg);
       if (instavel) {
         setContingenciaAtiva(true);
+        // Precisa que o campo de dados esteja visível pro operador colar manualmente.
+        setConferirDadosOpen(true);
         toast.warning(
           "Bases públicas instáveis. O Modo Manual de Contingência foi ativado automaticamente.",
           { description: "Cole os dados da empresa direto no campo abaixo e siga com a ligação." },
@@ -776,7 +790,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       const cached = aiCache.get(cacheKey);
       if (cached) {
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
-        setScriptOpen(true);
+        setScriptOpen(false);
         setPrepOpen(false);
         scrollToScript();
         void autoIniciarGravacao();
@@ -796,7 +810,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       aiCache.set(cacheKey, finalText);
 
       setScript(finalText);
-      setScriptOpen(true);
+      setScriptOpen(false);
       setPrepOpen(false);
       scrollToScript();
       void autoIniciarGravacao();
@@ -867,7 +881,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       } finally {
         setLoadingGen(false);
       }
-      setScriptOpen(true);
+      setScriptOpen(false);
       scrollToScript();
       toast.success(
         currentLeadState
@@ -1463,14 +1477,32 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         </div>
 
 
-        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
-            2
-          </span>
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Conferir dados
-          </span>
-        </div>
+        <Collapsible
+          open={conferirDadosOpen}
+          onOpenChange={setConferirDadosOpen}
+          className="border-t border-border/60 pt-3"
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 text-left"
+            >
+              <span className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+                  2
+                </span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {conferirDadosOpen
+                    ? "Conferir dados"
+                    : `Dados confirmados${empresaResumo ? ` — ${empresaResumo.split("·")[0]?.trim()}` : ""}`}
+                </span>
+              </span>
+              <span className="text-[11px] font-normal text-muted-foreground underline">
+                {conferirDadosOpen ? "recolher" : "revisar"}
+              </span>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2 pt-3">
 
         <div ref={dadosSectionRef}>
 
@@ -1509,6 +1541,9 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             className={`mt-1 text-sm ${contingenciaAtiva ? "border-amber-400 focus-visible:ring-amber-400/40" : ""}`}
           />
         </div>
+
+          </CollapsibleContent>
+        </Collapsible>
 
 
         <div className="flex items-center gap-2 border-t border-border/60 pt-3">
