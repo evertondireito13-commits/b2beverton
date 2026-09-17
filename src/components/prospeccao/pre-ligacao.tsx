@@ -119,7 +119,6 @@ import {
   LogOut,
   MessageCircle,
   ArrowRight,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -233,6 +232,77 @@ function getExemploObjecao(segmento: string): string {
   return "Num caso parecido, encontramos oportunidade em peças de reposição e óleos industriais que já estavam classificados como consumo padrão.";
 }
 
+// ---- Fluxo da ligação dinâmico, lido do prompt ativo ----
+// Formato travado que o prompt precisa seguir pra virar cards automaticamente
+// (ver MOLDE-NOVO-TEMA.md): blocos ###TAG ... ###FIM_TAG. As regras de
+// extração de {NOME}/{SEGMENTO}/{INSUMOS}/{CIDADE_ESTADO} NUNCA ficam aqui —
+// elas são fixas no código (preencherTagsDoScript / inferirSegmentoPorCnae),
+// então funcionam igual não importa o tema do prompt.
+type FluxoParseado = {
+  tema: string | null;
+  aberturaTexto: string;
+  objecoes: { label: string; texto: string }[];
+  fechamentoTexto: string | null;
+  encerramentoTexto: string | null;
+};
+
+function parseFluxoFromPrompt(raw: string): FluxoParseado | null {
+  if (!raw || !/###\s*ABERTURA\b/i.test(raw)) return null;
+
+  function extrairBloco(tag: string): string | null {
+    const re = new RegExp(`###\\s*${tag}\\s*\\n([\\s\\S]*?)###\\s*FIM_${tag}\\b`, "i");
+    const m = raw.match(re);
+    return m ? m[1].trim() : null;
+  }
+
+  const aberturaTexto = extrairBloco("ABERTURA");
+  if (!aberturaTexto) return null; // Tag presente mas vazia/malformada — cai no fallback fixo.
+
+  const temaMatch = raw.match(/###\s*TEMA\s*:\s*(.+)/i);
+  const tema = temaMatch ? temaMatch[1].trim() : null;
+
+  const objecoes: { label: string; texto: string }[] = [];
+  const reObjecao = /###\s*OBJECAO\s*:\s*(.+?)\s*\n([\s\S]*?)###\s*FIM_OBJECAO\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = reObjecao.exec(raw)) !== null) {
+    const label = match[1].trim();
+    const texto = match[2].trim();
+    if (label && texto) objecoes.push({ label, texto });
+  }
+
+  return {
+    tema,
+    aberturaTexto,
+    objecoes,
+    fechamentoTexto: extrairBloco("FECHAMENTO"),
+    encerramentoTexto: extrairBloco("ENCERRAMENTO"),
+  };
+}
+
+/** Ícone aproximado por palavra-chave no rótulo da objeção — usado só quando
+ * o card vem do prompt dinâmico (objeções fixas no código já têm ícone escolhido à mão). */
+function iconForLabel(label: string): LucideIcon {
+  const l = label.toLowerCase();
+  if (/e-?mail|whatsapp/.test(l)) return Mail;
+  if (/liga.*depois|depois.*liga|retorn/.test(l)) return PhoneCall;
+  if (/tempo|corrido|ocupad/.test(l)) return Clock;
+  if (/contador|fiscal|cont[aá]b|jur[ií]dico|consultoria|revis/.test(l)) return Users;
+  if (/decide|diretor|decis[aã]o|aprova/.test(l)) return HelpCircle;
+  if (/interesse|obrigado/.test(l)) return ThumbsDown;
+  if (/custa|pre[cç]o|valor|quanto/.test(l)) return CircleDollarSign;
+  return HelpCircle;
+}
+
+function slugifyObjecaoLabel(label: string, idx: number): string {
+  const s = label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return s || `objecao-${idx}`;
+}
+
 export function PreLigacao({
   promptText,
 }: {
@@ -248,6 +318,7 @@ export function PreLigacao({
   const [empresaResumo, setEmpresaResumo] = useState<string | null>(sess0.empresaResumo ?? pre0.empresaResumo ?? null);
   const [loadingCnpj, setLoadingCnpj] = useState(false);
   const [loadingGen, setLoadingGen] = useState(false);
+  const [searchMode, setSearchMode] = useState<"cnpj" | "nome">("cnpj");
   const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
   // ---- Dados de confirmação da reunião (preenchidos no card "Fechou! Confirmar
   // horário" do Fluxo da ligação) — persistidos no rascunho local da Pré-ligação
@@ -280,11 +351,6 @@ export function PreLigacao({
   // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
   // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
-  // "Conferir dados" (passo 2) só precisa ficar aberto quando os dados vieram
-  // de uma busca crua na API (BrasilAPI/CNPJá) — aí sim o operador precisa
-  // olhar e confirmar se é a empresa certa. Quando os dados já vêm prontos da
-  // Preparação Noturna (já conferidos antes), o passo começa recolhido.
-  const [conferirDadosOpen, setConferirDadosOpen] = useState<boolean>(true);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   // Referência do bloco de script gerado — usada para rolar a tela até ele
   // assim que a compilação/geração termina (o operador pode estar com a tela
@@ -347,9 +413,6 @@ export function PreLigacao({
       else if (texto && dadosDirtyRef.current) {
         toast.info("Mantendo suas edições no campo 'Dados da empresa'.");
       }
-      // Dados vindos da Preparação Noturna já foram conferidos antes —
-      // não precisa reabrir o passo "Conferir dados" por padrão.
-      if (texto) setConferirDadosOpen(false);
       const nomePrincipal = razaoSocial || nome;
       if (cnpjDigits) setCnpj(cnpjDigits);
       if (nomePrincipal) {
@@ -440,7 +503,6 @@ export function PreLigacao({
     setReuniaoEmail("");
     setReuniaoData("");
     setReuniaoHora("");
-    setConferirDadosOpen(true);
     updateRascunho({
       pre: {
         cnpj: "",
@@ -572,9 +634,6 @@ export function PreLigacao({
         .join("\n");
       if (!dadosDirtyRef.current) {
         setDados(bloco);
-        // Dados crus vindos direto da API: precisa que o operador olhe e
-        // confirme se é a empresa certa antes de compilar o script.
-        setConferirDadosOpen(true);
       } else {
         toast.info("Mantendo suas edições no campo 'Dados da empresa' (busca automática não sobrescreveu).");
       }
@@ -617,8 +676,6 @@ export function PreLigacao({
         || /rate.?limit|too many|timeout|network|fetch|failed to fetch|econnreset|enotfound/i.test(msg);
       if (instavel) {
         setContingenciaAtiva(true);
-        // Precisa que o campo de dados esteja visível pro operador colar manualmente.
-        setConferirDadosOpen(true);
         toast.warning(
           "Bases públicas instáveis. O Modo Manual de Contingência foi ativado automaticamente.",
           { description: "Cole os dados da empresa direto no campo abaixo e siga com a ligação." },
@@ -673,6 +730,7 @@ export function PreLigacao({
     // Se o usuário colou um CNPJ aqui, faz o lookup direto
     const digits = termo.replace(/\D/g, "");
     if (digits.length === 14) {
+      setSearchMode("cnpj");
       setCnpj(digits);
       await handleLookup(digits);
       return;
@@ -688,6 +746,7 @@ export function PreLigacao({
       // Se só veio 1 resultado, já carrega os dados completos automaticamente
       if (r.itens.length === 1) {
         const unico = r.itens[0];
+        setSearchMode("cnpj");
         setCnpj(unico.cnpj);
         await handleLookup(unico.cnpj);
         return;
@@ -788,7 +847,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       const cached = aiCache.get(cacheKey);
       if (cached) {
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
-        setScriptOpen(false);
+        setScriptOpen(true);
         setPrepOpen(false);
         scrollToScript();
         void autoIniciarGravacao();
@@ -808,7 +867,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       aiCache.set(cacheKey, finalText);
 
       setScript(finalText);
-      setScriptOpen(false);
+      setScriptOpen(true);
       setPrepOpen(false);
       scrollToScript();
       void autoIniciarGravacao();
@@ -879,7 +938,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       } finally {
         setLoadingGen(false);
       }
-      setScriptOpen(false);
+      setScriptOpen(true);
       scrollToScript();
       toast.success(
         currentLeadState
@@ -1047,90 +1106,140 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     toast.success("Resposta copiada");
   }
 
-  const abertura: ObjecaoCard = {
-    id: "abertura",
-    label: "Abertura principal",
-    icon: MessageCircle,
-    kind: "abertura",
-    resposta: `${nomeAtivo ? `Oi, ${nomeAtivo}, tudo bem?` : "Oi, tudo bem?"} Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
-  };
+  // Lead usado só pra preencher {NOME}/{SEGMENTO}/{INSUMOS}/{CIDADE_ESTADO}
+  // dentro dos blocos vindos do prompt dinâmico. Cai pro fallback já usado no
+  // resto do app quando ainda não há CNPJ estruturado (ex: dados colados manualmente).
+  const leadParaFluxo = currentLeadState ?? (dados.trim() ? montarLeadFallback(dados, cnpj, empresaResumo) : null);
+  function preencherTagsFluxo(texto: string): string {
+    return leadParaFluxo ? preencherTagsDoScript(texto, leadParaFluxo, dados.trim(), nomeAtivo) : texto;
+  }
 
-  const objecoes: ObjecaoCard[] = [
-    {
-      id: "contador",
-      label: "Já tem contador/fiscal",
-      icon: Users,
-      kind: "objecao",
-      resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
-    },
-    {
-      id: "email",
-      label: "Manda por e-mail",
-      icon: Mail,
-      kind: "objecao",
-      resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
-    },
-    {
-      id: "sem-tempo",
-      label: "Sem tempo agora",
-      icon: Clock,
-      kind: "objecao",
-      resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
-    },
-    {
-      id: "nao-decide",
-      label: "Não decide sozinho",
-      icon: HelpCircle,
-      kind: "objecao",
-      resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
-      extra: {
-        gatilho: "Insistiu que só o diretor decide",
-        texto: "Sem problema, posso já agendar com você e o diretor junto, o que for melhor pra vocês.",
-      },
-    },
-    {
-      id: "sem-interesse",
-      label: "Não tem interesse",
-      icon: ThumbsDown,
-      kind: "objecao",
-      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
-      routing: [
-        { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
-        { label: "Já revisamos →", targetId: "contador" },
-      ],
-    },
-    {
-      id: "liga-depois",
-      label: "Pede pra ligar depois",
-      icon: PhoneCall,
-      kind: "objecao",
-      resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
-    },
-    {
-      id: "quanto-custa",
-      label: "Pergunta quanto custa",
-      icon: CircleDollarSign,
-      kind: "objecao",
-      resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
-    },
-  ];
+  // Tenta ler o Fluxo direto do prompt ativo (formato ###ABERTURA / ###OBJECAO
+  // — ver MOLDE-NOVO-TEMA.md). Se o prompt ativo ainda não usa esse formato
+  // (ex: prompts antigos como o v4), cai pro Fluxo fixo BHM abaixo, sem quebrar nada.
+  const fluxoParseado = useMemo(() => parseFluxoFromPrompt(promptText), [promptText]);
 
-  const terminais: ObjecaoCard[] = [
-    {
-      id: "fechamento",
-      label: "Fechou! Confirmar horário",
-      icon: CheckCircle2,
-      kind: "terminal",
-      resposta: `Perfeito, ${nomeParaObjecoes}! Então fico de te chamar amanhã pra essa conversa de 10 minutinhos, combinado? Te mando um lembrete antes. Muito obrigado pelo seu tempo!`,
-    },
-    {
-      id: "encerrar",
-      label: "Não quis, encerrar com respeito",
-      icon: LogOut,
-      kind: "terminal",
-      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo completamente. Fico à disposição se mudar de ideia. Muito obrigado pelo seu tempo, tenha um ótimo dia!`,
-    },
-  ];
+  const abertura: ObjecaoCard = fluxoParseado
+    ? {
+        id: "abertura",
+        label: "Abertura principal",
+        icon: MessageCircle,
+        kind: "abertura",
+        resposta: preencherTagsFluxo(fluxoParseado.aberturaTexto),
+      }
+    : {
+        id: "abertura",
+        label: "Abertura principal",
+        icon: MessageCircle,
+        kind: "abertura",
+        resposta: `${nomeAtivo ? `Oi, ${nomeAtivo}, tudo bem?` : "Oi, tudo bem?"} Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
+      };
+
+  const objecoes: ObjecaoCard[] = fluxoParseado
+    ? fluxoParseado.objecoes.map((o, idx) => ({
+        id: slugifyObjecaoLabel(o.label, idx),
+        label: o.label,
+        icon: iconForLabel(o.label),
+        kind: "objecao" as const,
+        resposta: preencherTagsFluxo(o.texto),
+      }))
+    : [
+        {
+          id: "contador",
+          label: "Já tem contador/fiscal",
+          icon: Users,
+          kind: "objecao",
+          resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
+        },
+        {
+          id: "email",
+          label: "Manda por e-mail",
+          icon: Mail,
+          kind: "objecao",
+          resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
+        },
+        {
+          id: "sem-tempo",
+          label: "Sem tempo agora",
+          icon: Clock,
+          kind: "objecao",
+          resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
+        },
+        {
+          id: "nao-decide",
+          label: "Não decide sozinho",
+          icon: HelpCircle,
+          kind: "objecao",
+          resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
+          extra: {
+            gatilho: "Insistiu que só o diretor decide",
+            texto: "Sem problema, posso já agendar com você e o diretor junto, o que for melhor pra vocês.",
+          },
+        },
+        {
+          id: "sem-interesse",
+          label: "Não tem interesse",
+          icon: ThumbsDown,
+          kind: "objecao",
+          resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
+          routing: [
+            { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
+            { label: "Já revisamos →", targetId: "contador" },
+          ],
+        },
+        {
+          id: "liga-depois",
+          label: "Pede pra ligar depois",
+          icon: PhoneCall,
+          kind: "objecao",
+          resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
+        },
+        {
+          id: "quanto-custa",
+          label: "Pergunta quanto custa",
+          icon: CircleDollarSign,
+          kind: "objecao",
+          resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
+        },
+      ];
+
+  const terminais: ObjecaoCard[] = fluxoParseado
+    ? [
+        {
+          id: "fechamento",
+          label: "Fechou! Confirmar horário",
+          icon: CheckCircle2,
+          kind: "terminal",
+          resposta: fluxoParseado.fechamentoTexto
+            ? preencherTagsFluxo(fluxoParseado.fechamentoTexto)
+            : `Perfeito, ${nomeParaObjecoes}! Então fico de te chamar amanhã pra essa conversa de 10 minutinhos, combinado? Te mando um lembrete antes. Muito obrigado pelo seu tempo!`,
+        },
+        {
+          id: "encerrar",
+          label: "Não quis, encerrar com respeito",
+          icon: LogOut,
+          kind: "terminal",
+          resposta: fluxoParseado.encerramentoTexto
+            ? preencherTagsFluxo(fluxoParseado.encerramentoTexto)
+            : `Tudo bem, ${nomeParaObjecoes}, entendo completamente. Fico à disposição se mudar de ideia. Muito obrigado pelo seu tempo, tenha um ótimo dia!`,
+        },
+      ]
+    : [
+        {
+          id: "fechamento",
+          label: "Fechou! Confirmar horário",
+          icon: CheckCircle2,
+          kind: "terminal",
+          resposta: `Perfeito, ${nomeParaObjecoes}! Então fico de te chamar amanhã pra essa conversa de 10 minutinhos, combinado? Te mando um lembrete antes. Muito obrigado pelo seu tempo!`,
+        },
+        {
+          id: "encerrar",
+          label: "Não quis, encerrar com respeito",
+          icon: LogOut,
+          kind: "terminal",
+          resposta: `Tudo bem, ${nomeParaObjecoes}, entendo completamente. Fico à disposição se mudar de ideia. Muito obrigado pelo seu tempo, tenha um ótimo dia!`,
+        },
+      ];
 
   const todosOsCardsObjecao = [abertura, ...objecoes, ...terminais];
   function labelDoCardObjecao(id: string) {
@@ -1220,85 +1329,127 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         )}
 
         <div className="space-y-2">
-          {/* Campo único: cola/digita CNPJ OU razão social/nome fantasia/sócio
-              na mesma linha. handleBuscaNome() já detecta sozinho se o texto
-              é um CNPJ completo (14 dígitos) e roteia pro lookup certo — não
-              precisa mais de abas separadas "CNPJ" / "Razão social". */}
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="busca-empresa"
-              value={nomeBusca}
-              onChange={(e) => setNomeBusca(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
-              placeholder="Pesquisar CNPJ, razão social, nome fantasia ou sócio"
-              className="h-11 pl-9 pr-20 text-sm"
-            />
-            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
-              {nomeBusca && !loadingBusca && !loadingCnpj && (
-                <button
-                  type="button"
-                  onClick={() => setNomeBusca("")}
-                  aria-label="Limpar busca"
-                  className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-8 px-2.5"
-                onClick={handleBuscaNome}
-                disabled={loadingBusca || loadingCnpj}
-                aria-label="Buscar"
-              >
-                {loadingBusca || loadingCnpj ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
+          <div className="inline-flex w-full rounded-lg border border-input bg-muted/40 p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setSearchMode("cnpj")}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "cnpj" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              CNPJ
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode("nome")}
+              className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-all ${searchMode === "nome" ? "bg-background text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Razão social
+            </button>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            CNPJ completo busca direto na BrasilAPI · nome, fantasia ou sócio busca via CNPJá.
-          </p>
 
-          {resultados.length > 0 && (
-            <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
-              {resultados.map((m) => (
-                <li key={m.cnpj}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCnpj(m.cnpj);
-                      handleLookup(m.cnpj);
-                    }}
-                    className="w-full cursor-pointer rounded border border-transparent p-2 text-left text-xs transition hover:border-primary/40 hover:bg-primary/5"
-                  >
-                    <div className="font-medium">
-                      {m.razaoSocial}
-                      {m.nomeFantasia && (
-                        <span className="text-muted-foreground"> · {m.nomeFantasia}</span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {m.cnpjFormatado}
-                      {m.tipo && ` · ${m.tipo}`}
-                      {m.situacao && ` · ${m.situacao}`}
-                      {m.cidadeUf && ` · ${m.cidadeUf}`}
-                    </div>
-                    {m.atividade && (
-                      <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-                        {m.atividade}
-                      </div>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {searchMode === "cnpj" ? (
+            <div>
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                <Label htmlFor="cnpj" className="text-xs">
+                  Buscar por CNPJ (BrasilAPI)
+                </Label>
+              </div>
+
+              <div className="mt-1 flex gap-2">
+                <Input
+                  id="cnpj"
+                  placeholder="00.000.000/0000-00 ou só números"
+                  value={cnpj}
+                  onChange={(e) => setCnpj(e.target.value.replace(/[^\d./-]/g, ""))}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData("text");
+                    const cleaned = pasted.replace(/[^\d]/g, "");
+                    if (cleaned.length >= 8) {
+                      e.preventDefault();
+                      setCnpj(cleaned);
+                    }
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && handleLookup()}
+                />
+                <Button
+                  onClick={() => handleLookup()}
+                  disabled={loadingCnpj}
+                  variant="secondary"
+                  aria-label="Buscar CNPJ"
+                >
+                  {loadingCnpj ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <Label htmlFor="nome-busca" className="text-xs">
+                Buscar por nome fantasia ou razão social
+              </Label>
+              <div className="mt-1 flex gap-2">
+                <Input
+                  id="nome-busca"
+                  placeholder="Ex.: Padaria do João, Construtora ABC…"
+                  value={nomeBusca}
+                  onChange={(e) => setNomeBusca(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleBuscaNome()}
+                />
+                <Button
+                  onClick={handleBuscaNome}
+                  disabled={loadingBusca}
+                  variant="secondary"
+                  aria-label="Buscar por nome"
+                >
+                  {loadingBusca ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Busca via CNPJá. Clique em um resultado para carregar os dados completos.
+              </p>
+
+              {resultados.length > 0 && (
+                <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-md border p-1">
+                  {resultados.map((m) => (
+                    <li key={m.cnpj}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchMode("cnpj");
+                          setCnpj(m.cnpj);
+                          handleLookup(m.cnpj);
+                        }}
+                        className="w-full cursor-pointer rounded border border-transparent p-2 text-left text-xs transition hover:border-primary/40 hover:bg-primary/5"
+                      >
+                        <div className="font-medium">
+                          {m.razaoSocial}
+                          {m.nomeFantasia && (
+                            <span className="text-muted-foreground"> · {m.nomeFantasia}</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {m.cnpjFormatado}
+                          {m.tipo && ` · ${m.tipo}`}
+                          {m.situacao && ` · ${m.situacao}`}
+                          {m.cidadeUf && ` · ${m.cidadeUf}`}
+                        </div>
+                        {m.atividade && (
+                          <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                            {m.atividade}
+                          </div>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
 
           {empresaResumo && (
@@ -1433,32 +1584,14 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         </div>
 
 
-        <Collapsible
-          open={conferirDadosOpen}
-          onOpenChange={setConferirDadosOpen}
-          className="border-t border-border/60 pt-3"
-        >
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-2 text-left"
-            >
-              <span className="flex items-center gap-2">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
-                  2
-                </span>
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {conferirDadosOpen
-                    ? "Conferir dados"
-                    : `Dados confirmados${empresaResumo ? ` — ${empresaResumo.split("·")[0]?.trim()}` : ""}`}
-                </span>
-              </span>
-              <span className="text-[11px] font-normal text-muted-foreground underline">
-                {conferirDadosOpen ? "recolher" : "revisar"}
-              </span>
-            </button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-2 pt-3">
+        <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+            2
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Conferir dados
+          </span>
+        </div>
 
         <div ref={dadosSectionRef}>
 
@@ -1497,9 +1630,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             className={`mt-1 text-sm ${contingenciaAtiva ? "border-amber-400 focus-visible:ring-amber-400/40" : ""}`}
           />
         </div>
-
-          </CollapsibleContent>
-        </Collapsible>
 
 
         <div className="flex items-center gap-2 border-t border-border/60 pt-3">
@@ -1639,6 +1769,18 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Fluxo da ligação
               </span>
+              {fluxoParseado ? (
+                <span
+                  className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                  title={fluxoParseado.tema ?? undefined}
+                >
+                  lendo do prompt ativo{fluxoParseado.tema ? ` · ${fluxoParseado.tema}` : ""}
+                </span>
+              ) : (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  script fixo (BHM padrão)
+                </span>
+              )}
             </div>
 
             {!activeStep && (
@@ -1890,27 +2032,25 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                 )}
 
                 {cardAtivo.kind !== "terminal" && (
-                  <div className="mt-3 border-t border-border/60 pt-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 text-[11px]"
-                        onClick={() => irParaStep("fechamento")}
-                      >
-                        <CheckCircle2 className="mr-1 h-3 w-3" />
-                        Aceitou, fechar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-[11px]"
-                        onClick={() => irParaStep("encerrar")}
-                      >
-                        <LogOut className="mr-1 h-3 w-3" />
-                        Não quis, encerrar
-                      </Button>
-                    </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 text-[11px]"
+                      onClick={() => irParaStep("fechamento")}
+                    >
+                      <CheckCircle2 className="mr-1 h-3 w-3" />
+                      Aceitou, fechar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-[11px]"
+                      onClick={() => irParaStep("encerrar")}
+                    >
+                      <LogOut className="mr-1 h-3 w-3" />
+                      Não quis, encerrar
+                    </Button>
                   </div>
                 )}
               </div>
