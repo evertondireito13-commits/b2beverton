@@ -161,7 +161,17 @@ import { HistoricoEmpresaSheet } from "@/components/prospeccao/historico-empresa
 import { useHotkey } from "@/hooks/use-hotkey";
 
 import { CopyButton, loadSessaoAtiva, updateSessaoAtiva, clearSessaoAtiva, activeConsultorKey } from "@/routes/index";
-import { PromptLibraryPanel, inferirSegmentoPorCnae, montarLeadFallback, preencherTagsDoScript, contemAlucinacaoDeExtracao, compileScriptLocally, parseLeadFromDados, type ActiveLeadData } from "@/components/prospeccao/shared";
+import {
+  PromptLibraryPanel,
+  inferirSegmentoPorCnae,
+  montarLeadFallback,
+  preencherTagsDoScript,
+  contemAlucinacaoDeExtracao,
+  compileScriptLocally,
+  parseLeadFromDados,
+  parsePitchIntoCards,
+  type ActiveLeadData,
+} from "@/components/prospeccao/shared";
 import { extractFinalScriptOnly } from "@/lib/script-output";
 
 /** Payload de handoff da Preparação Noturna para a Pré-ligação. */
@@ -213,6 +223,14 @@ type ObjecaoCard = {
    * claramente aponta pra outro nó específico (aparecem em destaque, antes
    * do grid geral de "outros rumos possíveis"). */
   routing?: { label: string; targetId: string }[];
+  /** true = card comum ainda não coberto pelo pitch ativo nem pelo modelo
+   * genérico do sistema — fica travado (cinza, sem clique) em vez de
+   * inventar uma resposta que não é sua. */
+  travado?: boolean;
+  /** "pitch" = o texto vem do que você escreveu na Biblioteca de Prompts;
+   * "sistema" = modelo genérico usado como reserva, quando o pitch ativo
+   * não cobre essa parte. */
+  origem?: "pitch" | "sistema";
 };
 
 /** Exemplo de oportunidade encontrada, adaptado ao segmento do lead — usado na
@@ -232,6 +250,103 @@ function getExemploObjecao(segmento: string): string {
   }
   return "Num caso parecido, encontramos oportunidade em peças de reposição e óleos industriais que já estavam classificados como consumo padrão.";
 }
+
+// ---- Modelo genérico do sistema (reserva) ----
+// Usado SOMENTE quando o pitch ativo não tem a seção correspondente. Sempre
+// que aparecer na tela, vem com um aviso deixando claro que é conteúdo do
+// sistema, não do script que o operador escreveu.
+function montarAberturaGenerica(
+  nomeAtivo: string,
+  segmentoInfo: ReturnType<typeof inferirSegmentoPorCnae>,
+  cidadeEstadoAtiva: string,
+): ObjecaoCard {
+  return {
+    id: "abertura",
+    label: "Abertura principal",
+    icon: MessageCircle,
+    kind: "abertura",
+    resposta: `${nomeAtivo ? `Oi, ${nomeAtivo}, tudo bem?` : "Oi, tudo bem?"} Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
+  };
+}
+
+function montarObjecoesGenericas(
+  nomeParaObjecoes: string,
+  segmentoInfo: ReturnType<typeof inferirSegmentoPorCnae>,
+): ObjecaoCard[] {
+  return [
+    {
+      id: "contador",
+      label: "Já tem contador/fiscal",
+      icon: Users,
+      kind: "objecao",
+      resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
+    },
+    {
+      id: "email",
+      label: "Manda por e-mail",
+      icon: Mail,
+      kind: "objecao",
+      resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
+    },
+    {
+      id: "sem-tempo",
+      label: "Sem tempo agora",
+      icon: Clock,
+      kind: "objecao",
+      resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
+    },
+    {
+      id: "nao-decide",
+      label: "Não decide sozinho",
+      icon: HelpCircle,
+      kind: "objecao",
+      resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
+      extra: {
+        gatilho: "Insistiu que só o diretor decide",
+        texto: "Sem problema, posso já agendar com você e o diretor junto, o que for melhor pra vocês.",
+      },
+    },
+    {
+      id: "sem-interesse",
+      label: "Não tem interesse",
+      icon: ThumbsDown,
+      kind: "objecao",
+      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
+      routing: [
+        { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
+        { label: "Já revisamos →", targetId: "contador" },
+      ],
+    },
+    {
+      id: "liga-depois",
+      label: "Pede pra ligar depois",
+      icon: PhoneCall,
+      kind: "objecao",
+      resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
+    },
+    {
+      id: "quanto-custa",
+      label: "Pergunta quanto custa",
+      icon: CircleDollarSign,
+      kind: "objecao",
+      resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
+    },
+  ];
+}
+
+// Categorias comuns de objeção que o "Ir direto para" sempre mostra. Cada
+// uma tenta casar com uma objeção do pitch ativo por palavra-chave; se não
+// achar, o card correspondente fica travado (cinza) em vez de inventar
+// conteúdo — essa é a regra de ouro combinada com o Everton.
+const CATEGORIAS_CANONICAS: { id: string; label: string; icon: LucideIcon; keywords: RegExp }[] = [
+  { id: "contador", label: "Já tem contador/fiscal", icon: Users, keywords: /contador|fiscal|jur[ií]dico|consultoria|revis(ei|ão|amos)/i },
+  { id: "email", label: "Manda por e-mail", icon: Mail, keywords: /e-?mail|whatsapp/i },
+  { id: "sem-tempo", label: "Sem tempo agora", icon: Clock, keywords: /sem\s+tempo|corrid[oa]|agora\s+n[ãa]o/i },
+  { id: "nao-decide", label: "Não decide sozinho", icon: HelpCircle, keywords: /n[ãa]o\s+decid|diretor|s[óo]cio/i },
+  { id: "sem-interesse", label: "Não tem interesse", icon: ThumbsDown, keywords: /interesse|n[ãa]o,?\s+obrigad[oa]/i },
+  { id: "liga-depois", label: "Pede pra ligar depois", icon: PhoneCall, keywords: /ligar\s+depois|melhor\s+hor[áa]rio|liga(r)?\s+outra\s+hora/i },
+  { id: "quanto-custa", label: "Pergunta quanto custa", icon: CircleDollarSign, keywords: /custa|valor|pre[çc]o|quanto\s+fica/i },
+];
 
 export function PreLigacao({
   promptText,
@@ -968,6 +1083,97 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     return cidade || "aí na região";
   }, [currentLeadState]);
 
+  // ---- Cards do fluxo, derivados do PITCH ATIVO ----
+  // Lê o texto literal do prompt ativo (promptText) e separa em Abertura +
+  // Objeções. Regra de ouro: nunca inventa conteúdo de objeção — usa
+  // exatamente o que está escrito no pitch. Quando falta alguma parte, cai
+  // no modelo genérico do sistema (com aviso) ou trava o card específico
+  // (ver CATEGORIAS_CANONICAS acima).
+  const parsedPitch = useMemo(() => parsePitchIntoCards(promptText), [promptText]);
+
+  const cardsCalculados = useMemo(() => {
+    const leadParaTags = currentLeadState ?? montarLeadFallback(dados, cnpj, empresaResumo);
+    const nomeParaTags = nomeAtivo || "tudo bem?";
+    const hidratar = (t: string) => preencherTagsDoScript(t, leadParaTags, dados, nomeParaTags);
+    const hidratarExtra = (e?: { gatilho: string; texto: string }) =>
+      e ? { gatilho: e.gatilho, texto: hidratar(e.texto) } : undefined;
+
+    // ---- Abertura ----
+    const aberturaFinal: ObjecaoCard = parsedPitch.abertura
+      ? {
+          id: "abertura",
+          label: "Abertura principal",
+          icon: MessageCircle,
+          kind: "abertura",
+          resposta: hidratar(parsedPitch.abertura.resposta),
+          extra: hidratarExtra(parsedPitch.abertura.extra),
+          origem: "pitch",
+        }
+      : { ...montarAberturaGenerica(nomeAtivo, segmentoInfo, cidadeEstadoAtiva), origem: "sistema" };
+
+    // ---- Objeções ----
+    const objecoesFinal: ObjecaoCard[] = [];
+    if (parsedPitch.objecoes.length === 0) {
+      // Pitch ativo não tem NENHUMA quebra de objeção escrita — usa o
+      // conjunto genérico do sistema inteiro, claramente identificado.
+      for (const c of montarObjecoesGenericas(nomeParaObjecoes, segmentoInfo)) {
+        objecoesFinal.push({ ...c, origem: "sistema" });
+      }
+    } else {
+      const usados = new Set<number>();
+      for (const cat of CATEGORIAS_CANONICAS) {
+        const idx = parsedPitch.objecoes.findIndex(
+          (p, i) => !usados.has(i) && cat.keywords.test(`${p.label} ${p.resposta}`),
+        );
+        if (idx >= 0) {
+          usados.add(idx);
+          const p = parsedPitch.objecoes[idx];
+          objecoesFinal.push({
+            id: cat.id,
+            label: p.label || cat.label,
+            icon: cat.icon,
+            kind: "objecao",
+            resposta: hidratar(p.resposta),
+            extra: hidratarExtra(p.extra),
+            origem: "pitch",
+          });
+        } else {
+          // Categoria comum não coberta pelo pitch ativo: trava em vez de
+          // inventar conteúdo — a regra de ouro combinada com o Everton.
+          objecoesFinal.push({
+            id: cat.id,
+            label: cat.label,
+            icon: cat.icon,
+            kind: "objecao",
+            resposta: "",
+            travado: true,
+            origem: "sistema",
+          });
+        }
+      }
+      // Objeções do pitch que não bateram com nenhuma categoria comum viram
+      // cards extras — conteúdo real do usuário, fora do padrão.
+      parsedPitch.objecoes.forEach((p, i) => {
+        if (usados.has(i)) return;
+        objecoesFinal.push({
+          id: p.id,
+          label: p.label,
+          icon: HelpCircle,
+          kind: "objecao",
+          resposta: hidratar(p.resposta),
+          extra: hidratarExtra(p.extra),
+          origem: "pitch",
+        });
+      });
+    }
+
+    return { aberturaFinal, objecoesFinal, usandoFallbackObjecoes: parsedPitch.objecoes.length === 0 };
+  }, [parsedPitch, currentLeadState, dados, cnpj, empresaResumo, nomeAtivo, nomeParaObjecoes, segmentoInfo, cidadeEstadoAtiva]);
+
+  const abertura = cardsCalculados.aberturaFinal;
+  const objecoes = cardsCalculados.objecoesFinal;
+  const usandoFallbackObjecoes = cardsCalculados.usandoFallbackObjecoes;
+
   /** Navega o fluxo até o nó `id`. Se `id` já estiver na trilha (o operador
    * está voltando pra um ponto anterior da conversa), poda tudo que vinha
    * depois dele — daqui pra frente a conversa pode seguir por outro caminho. */
@@ -1046,74 +1252,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     await navigator.clipboard.writeText(limpo);
     toast.success("Resposta copiada");
   }
-
-  const abertura: ObjecaoCard = {
-    id: "abertura",
-    label: "Abertura principal",
-    icon: MessageCircle,
-    kind: "abertura",
-    resposta: `${nomeAtivo ? `Oi, ${nomeAtivo}, tudo bem?` : "Oi, tudo bem?"} Aqui é o Everton, da BHM Advogados.\n[pausa de 1 segundo — deixe a pessoa responder algo, mesmo que seja só "oi"]\nVou ser bem direto: eu estou falando com algumas indústrias de ${segmentoInfo.segmento || "vocês"} aí em ${cidadeEstadoAtiva} sobre a forma como certos materiais usados na produção — como ${segmentoInfo.insumos || "certos insumos"} — acabam sendo tratados na parte fiscal.\nQueria te mostrar isso rapidinho, em uns 10 minutos, online e sem custo, pra ver se faz sentido também pra vocês. Consegue amanhã de manhã ou à tarde?\n[depois de perguntar, PARE de falar. Espere a resposta. Não emende com mais explicação — quem emenda perde o fechamento]`,
-  };
-
-  const objecoes: ObjecaoCard[] = [
-    {
-      id: "contador",
-      label: "Já tem contador/fiscal",
-      icon: Users,
-      kind: "objecao",
-      resposta: `Faz todo sentido, ${nomeParaObjecoes} — na real, quase 100% das empresas que a gente atende já têm uma equipe fiscal ou contábil muito competente.\nE olha, mesmo assim, em cerca de 90% dessas empresas a gente encontrou alguma oportunidade que tinha passado batido — não porque alguém errou, mas porque o sistema classifica pelo cadastro, e a gente olha também como o material é usado de fato na produção.\n${getExemploObjecao(segmentoInfo.segmento ?? "")}\nPor isso vale os 10 minutos, mesmo já tendo revisão feita — é só pra comparar. Consegue amanhã de manhã ou à tarde?`,
-    },
-    {
-      id: "email",
-      label: "Manda por e-mail",
-      icon: Mail,
-      kind: "objecao",
-      resposta: `Consigo sim te mandar um resumo, ${nomeParaObjecoes}, mas sem uma conversa rápida eu não sei ainda o que é relevante pro caso de vocês — ia te mandar algo genérico.\nOs 10 minutos servem exatamente pra eu entender o que faz sentido olhar aí e já te falar se vale a pena ou não. Prefere amanhã de manhã ou à tarde?`,
-    },
-    {
-      id: "sem-tempo",
-      label: "Sem tempo agora",
-      icon: Clock,
-      kind: "objecao",
-      resposta: `Sem problema, ${nomeParaObjecoes}, nem precisa ser agora.\nSó me diz um horário melhor pra você essa semana — pode ser 10 minutos no fim do dia ou de manhã antes das reuniões começarem?`,
-    },
-    {
-      id: "nao-decide",
-      label: "Não decide sozinho",
-      icon: HelpCircle,
-      kind: "objecao",
-      resposta: `Entendo, ${nomeParaObjecoes}, e nem precisa decidir nada agora — os 10 minutos são justamente pra levantar se existe algo concreto pra levar pra decisão.\nAssim você já chega pro diretor com um número, não com uma ideia solta. Faz sentido eu te mostrar isso primeiro pra você decidir se vale levar adiante? Amanhã de manhã ou à tarde?`,
-      extra: {
-        gatilho: "Insistiu que só o diretor decide",
-        texto: "Sem problema, posso já agendar com você e o diretor junto, o que for melhor pra vocês.",
-      },
-    },
-    {
-      id: "sem-interesse",
-      label: "Não tem interesse",
-      icon: ThumbsDown,
-      kind: "objecao",
-      resposta: `Tudo bem, ${nomeParaObjecoes}, entendo.\nSó uma coisa rápida antes de desligar: normalmente esse "não interesse" é porque já revisaram isso a fundo, ou é mais porque agora não é prioridade?`,
-      routing: [
-        { label: "Foi tempo/prioridade →", targetId: "sem-tempo" },
-        { label: "Já revisamos →", targetId: "contador" },
-      ],
-    },
-    {
-      id: "liga-depois",
-      label: "Pede pra ligar depois",
-      icon: PhoneCall,
-      kind: "objecao",
-      resposta: `Sem problema, ${nomeParaObjecoes}! Só pra eu não te pegar numa hora ruim de novo: qual o melhor dia e horário pra te ligar essa semana? Consigo amanhã de manhã ou à tarde, qual fica melhor?`,
-    },
-    {
-      id: "quanto-custa",
-      label: "Pergunta quanto custa",
-      icon: CircleDollarSign,
-      kind: "objecao",
-      resposta: `Boa pergunta, ${nomeParaObjecoes} — e é exatamente isso que fica mais claro nos 10 minutos, porque o valor depende do que a gente encontra na operação de vocês; não tem uma tabela fixa porque cada caso é diferente.\nNesses 10 minutos eu já consigo te dar uma direção bem concreta sobre isso. Consegue amanhã de manhã ou à tarde?`,
-    },
-  ];
 
   const terminais: ObjecaoCard[] = [
     {
@@ -1684,8 +1822,27 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               </div>
             )}
 
+            {/* Aviso quando parte do fluxo está vindo do modelo genérico do
+                sistema (o pitch ativo não tem essa parte escrita). */}
+            {(abertura.origem === "sistema" || usandoFallbackObjecoes) && (
+              <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                <span className="mt-0.5 shrink-0">⚠️</span>
+                <span>
+                  {abertura.origem === "sistema" && usandoFallbackObjecoes
+                    ? 'Seu script ativo não tem "1. ABERTURA PRINCIPAL" nem seções "OBJEÇÃO —" — os cards abaixo são o modelo genérico do sistema, não vieram do seu texto.'
+                    : abertura.origem === "sistema"
+                      ? 'A abertura abaixo é o modelo genérico do sistema — seu script ativo não tem uma seção "1. ABERTURA PRINCIPAL".'
+                      : 'As objeções abaixo são o modelo genérico do sistema — seu script ativo não tem seções "OBJEÇÃO —".'}
+                </span>
+              </div>
+            )}
+
             {/* Acesso direto: pula pra qualquer nó do fluxo a qualquer momento —
-                a conversa real não segue uma ordem fixa. */}
+                a conversa real não segue uma ordem fixa. Cards travados (cinza,
+                borda tracejada) são situações comuns que o script ativo ainda
+                não cobre — em vez de inventar uma resposta, o sistema trava o
+                botão até você escrever essa objeção no pitch (ou pedir pra
+                criar um card específico). */}
             <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
               Ir direto para
             </p>
@@ -1693,15 +1850,27 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               {[abertura, ...objecoes].map((obj) => {
                 const Icon = obj.icon;
                 const isCurrent = obj.id === activeStep;
+                const travado = obj.travado === true;
                 return (
                   <button
                     key={obj.id}
                     type="button"
-                    onClick={() => (isCurrent ? fecharStep() : irParaStep(obj.id))}
+                    disabled={travado}
+                    title={
+                      travado
+                        ? "Sem card pra essa situação no script ativo. Escreva essa objeção no pitch (ou peça pra criar um card específico)."
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (travado) return;
+                      isCurrent ? fecharStep() : irParaStep(obj.id);
+                    }}
                     className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
-                      isCurrent
-                        ? "border-primary bg-primary/10 text-primary shadow-sm"
-                        : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+                      travado
+                        ? "cursor-not-allowed border-dashed border-border/40 bg-muted/10 text-muted-foreground/40"
+                        : isCurrent
+                          ? "border-primary bg-primary/10 text-primary shadow-sm"
+                          : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
                     }`}
                   >
                     <Icon className="h-4 w-4" />
@@ -1724,17 +1893,24 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                 }`}
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span
-                    className={`text-xs font-semibold ${
-                      cardAtivo.kind === "terminal"
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : cardAtivo.kind === "abertura"
-                          ? "text-sky-700 dark:text-sky-300"
-                          : "text-primary"
-                    }`}
-                  >
-                    {cardAtivo.label}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`text-xs font-semibold ${
+                        cardAtivo.kind === "terminal"
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : cardAtivo.kind === "abertura"
+                            ? "text-sky-700 dark:text-sky-300"
+                            : "text-primary"
+                      }`}
+                    >
+                      {cardAtivo.label}
+                    </span>
+                    {cardAtivo.origem === "sistema" && (
+                      <span className="rounded bg-amber-200/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+                        Gerado pelo sistema
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       size="sm"
