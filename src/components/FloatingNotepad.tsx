@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { getActiveLead, ACTIVE_LEAD_EVENT, type ActiveLeadLike } from "@/lib/daily-activities";
 
 /**
  * Bloco de Notas Flutuante
@@ -9,10 +10,21 @@ import { useState, useRef, useEffect, useCallback } from "react";
 
 const STORE_KEY = "floating-notepad-v1";
 
+interface LinkedLead {
+  nome: string;
+  cnpj?: string;
+}
+
 interface NoteTab {
   id: string;
   name: string;
   content: string;
+  linkedLead?: LinkedLead | null;
+  linkedAt?: string | null;
+}
+
+function leadDisplayName(lead: ActiveLeadLike): string {
+  return lead.nomeFantasia || lead.razaoSocial || "Empresa sem nome";
 }
 
 interface Pos {
@@ -90,6 +102,9 @@ export default function FloatingNotepad() {
   const [toast, setToast] = useState<{ msg: string; x: number; y: number } | null>(null);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
+  const [currentActiveLead, setCurrentActiveLead] = useState<ActiveLeadLike | null>(() =>
+    typeof window !== "undefined" ? getActiveLead() : null
+  );
 
   const winRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -239,6 +254,18 @@ export default function FloatingNotepad() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---------- lead ativo (pra oferecer vincular a nota atual) ----------
+  useEffect(() => {
+    const sync = () => setCurrentActiveLead(getActiveLead());
+    sync();
+    window.addEventListener(ACTIVE_LEAD_EVENT, sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      window.removeEventListener(ACTIVE_LEAD_EVENT, sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
+
   // ---------- editor ----------
   useEffect(() => {
     if (editorRef.current) editorRef.current.value = activeTab().content;
@@ -309,9 +336,43 @@ export default function FloatingNotepad() {
     }));
   }
 
+  // ---------- vínculo com empresa/lead ----------
+  function linkCurrentTabToLead() {
+    if (!currentActiveLead) return;
+    const linkedLead: LinkedLead = {
+      nome: leadDisplayName(currentActiveLead),
+      cnpj: currentActiveLead.cnpj,
+    };
+    update((prev) => ({
+      ...prev,
+      tabs: prev.tabs.map((t) =>
+        t.id === prev.activeTabId ? { ...t, linkedLead, linkedAt: new Date().toISOString() } : t
+      ),
+    }));
+  }
+
+  function unlinkCurrentTab() {
+    update((prev) => ({
+      ...prev,
+      tabs: prev.tabs.map((t) =>
+        t.id === prev.activeTabId ? { ...t, linkedLead: null, linkedAt: null } : t
+      ),
+    }));
+  }
+
   // ---------- footer actions ----------
+  function tabHeader(tab: NoteTab): string {
+    if (!tab.linkedLead) return "";
+    const when = tab.linkedAt
+      ? new Date(tab.linkedAt).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+      : "";
+    const cnpjPart = tab.linkedLead.cnpj ? ` · CNPJ ${tab.linkedLead.cnpj}` : "";
+    return `[Empresa: ${tab.linkedLead.nome}${cnpjPart}${when ? ` · vinculado em ${when}` : ""}]\n\n`;
+  }
+
   async function handleCopy() {
-    const text = activeTab().content;
+    const tab = activeTab();
+    const text = tabHeader(tab) + tab.content;
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -327,12 +388,12 @@ export default function FloatingNotepad() {
 
   function handleDownload() {
     const tab = activeTab();
-    downloadText(sanitizeFilename(tab.name) + ".txt", tab.content);
+    downloadText(sanitizeFilename(tab.name) + ".txt", tabHeader(tab) + tab.content);
   }
 
   function handleDownloadAll() {
     const combined = state.tabs
-      .map((t) => "===== " + t.name + " =====\n\n" + t.content)
+      .map((t) => "===== " + t.name + " =====\n\n" + tabHeader(t) + t.content)
       .join("\n\n\n");
     downloadText("bloco-de-notas.txt", combined);
   }
@@ -407,6 +468,17 @@ export default function FloatingNotepad() {
           background:transparent; border:none; border-radius:4px; color:inherit; cursor:pointer; opacity:.85; }
         .fnp-iconbtn:hover{ background:rgba(255,255,255,.12); opacity:1; }
         .fnp-iconbtn svg{ width:15px; height:15px; }
+        .fnp-linkbar{ display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:11px;
+          border-bottom:1px solid var(--fnp-border); flex:0 0 auto; }
+        .fnp-linkbar svg{ width:12px; height:12px; flex:0 0 auto; opacity:.85; }
+        .fnp-linkbar-text{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .fnp-linkbar-linked{ background:var(--fnp-accent-soft); color:var(--fnp-accent); }
+        .fnp-linkbar-suggest{ background:var(--fnp-paper-alt); color:var(--fnp-ink-soft); cursor:pointer; }
+        .fnp-linkbar-suggest:hover{ background:var(--fnp-accent-soft); color:var(--fnp-accent); }
+        .fnp-linkbar-unlink{ width:16px; height:16px; display:flex; align-items:center; justify-content:center;
+          flex:0 0 auto; opacity:.6; border:none; background:transparent; color:inherit; cursor:pointer; }
+        .fnp-linkbar-unlink:hover{ opacity:1; }
+        .fnp-linkbar-unlink svg{ width:9px; height:9px; }
         .fnp-tabs{ display:flex; align-items:stretch; background:var(--fnp-paper-alt);
           border-bottom:1px solid var(--fnp-border); flex:0 0 auto; overflow-x:auto; scrollbar-width:thin; }
         .fnp-tab{ display:flex; align-items:center; gap:5px; padding:7px 8px 6px 11px; font-size:12px;
@@ -473,6 +545,40 @@ export default function FloatingNotepad() {
               </svg>
             </button>
           </div>
+
+          {activeTab().linkedLead ? (
+            <div className="fnp-linkbar fnp-linkbar-linked">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <path d="M4 21V7l8-4 8 4v14" />
+                <path d="M9 21v-6h6v6" />
+              </svg>
+              <span className="fnp-linkbar-text">
+                {activeTab().linkedLead!.nome}
+                {activeTab().linkedAt
+                  ? " · " +
+                    new Date(activeTab().linkedAt!).toLocaleTimeString("pt-BR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : ""}
+              </span>
+              <button className="fnp-linkbar-unlink" title="Desvincular desta empresa" onClick={unlinkCurrentTab}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                  <path d="M5 5l14 14M19 5L5 19" />
+                </svg>
+              </button>
+            </div>
+          ) : currentActiveLead ? (
+            <div className="fnp-linkbar fnp-linkbar-suggest" onClick={linkCurrentTabToLead}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <path d="M4 21V7l8-4 8 4v14" />
+                <path d="M9 21v-6h6v6" />
+              </svg>
+              <span className="fnp-linkbar-text">
+                Vincular esta nota a <strong>{leadDisplayName(currentActiveLead)}</strong>
+              </span>
+            </div>
+          ) : null}
 
           <div className="fnp-tabs">
             {state.tabs.map((tab) => (
