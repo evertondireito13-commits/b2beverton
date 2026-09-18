@@ -14,6 +14,7 @@ import {
   setActivePrompt,
   PROMPT_LIBRARY_EVENT,
   syncLibraryFromCloud,
+  getPromptsByTema,
   type PromptItem,
   type PromptTipo,
   type PromptLibrary,
@@ -120,6 +121,7 @@ import {
   MessageCircle,
   ArrowRight,
   X,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -170,6 +172,8 @@ import {
   compileScriptLocally,
   parseLeadFromDados,
   parsePitchIntoCards,
+  encontrarObjecaoEmOutrosPitchesDoTema,
+  atualizarSecaoDoPitch,
   type ActiveLeadData,
 } from "@/components/prospeccao/shared";
 import { extractFinalScriptOnly } from "@/lib/script-output";
@@ -189,52 +193,30 @@ type PreHandoffPayload = {
 };
 
 // ---- Caches em memória compartilhados entre montagens do componente ----
-// Ficam no escopo do módulo (não em useRef) de propósito: o PreLigacao é
-// desmontado toda vez que o operador troca de aba (Pós-ligação, Histórico
-// etc.), e um useRef local perderia o cache nesse momento — fazendo o app
-// rebuscar dados e regastar créditos de IA/API à toa ao simplesmente voltar
-// pra aba Pré-ligação. Guardando aqui, o cache sobrevive à navegação entre
-// abas e só é perdido em um reload completo da página.
 type LookupResult = Awaited<ReturnType<typeof lookupCnpj>>;
 type Telefones = Awaited<ReturnType<typeof enrichPhones>>;
 const lookupCache = new Map<string, LookupResult>();
 const phonesCache = new Map<string, Telefones>();
 const aiCache = new Map<string, string>();
-// Cache da extração de nome do contato por IA, por texto de dados colado —
-// evita gastar um crédito de IA de novo para o MESMO texto (ex: reprocessar
-// o script sem alterar os dados da empresa).
 const contactNameCache = new Map<string, string>();
 
-/** Um card/nó do fluxo de "Condução da ligação" na Pré-ligação.
- * O fluxo é modelado como um mapa de conversa (não uma árvore sim/não):
- * a partir de QUALQUER nó o operador pode seguir pra QUALQUER outro nó,
- * porque na vida real a pessoa do outro lado pode reagir de qualquer jeito. */
 type ObjecaoCard = {
   id: string;
   label: string;
   icon: LucideIcon;
   resposta: string;
-  /** "abertura" = nó inicial da ligação; "objecao" = contorno de objeção;
-   * "terminal" = desfecho da ligação (fechar ou encerrar). */
   kind: "abertura" | "objecao" | "terminal";
-  /** Nota extra que só aparece se o operador clicar num gatilho (ex: "insistiu"). */
   extra?: { gatilho: string; texto: string };
-  /** Botões de desvio sugeridos com prioridade, quando a resposta da pessoa
-   * claramente aponta pra outro nó específico (aparecem em destaque, antes
-   * do grid geral de "outros rumos possíveis"). */
   routing?: { label: string; targetId: string }[];
-  /** true = card comum ainda não coberto pelo pitch ativo nem pelo modelo
-   * genérico do sistema — fica travado (cinza, sem clique) em vez de
-   * inventar uma resposta que não é sua. */
-  travado?: boolean;
-  /** "pitch" = o texto vem do que você escreveu na Biblioteca de Prompts;
-   * "sistema" = modelo genérico usado como reserva, quando o pitch ativo
-   * não cobre essa parte. */
-  origem?: "pitch" | "sistema";
+  /** "pitch" = veio do PRÓPRIO pitch ativo (editável aqui);
+   * "pitch-tema" = emprestado de outro pitch do mesmo tema/aba (editar abre
+   * o pitch de origem, não edita aqui);
+   * "sistema" = modelo genérico de reserva (não editável aqui). */
+  origem?: "pitch" | "pitch-tema" | "sistema";
+  origemPitchId?: string;
+  origemPitchNome?: string;
 };
 
-/** Exemplo de oportunidade encontrada, adaptado ao segmento do lead — usado na
- * resposta da objeção "já tenho contador/fiscal". */
 function getExemploObjecao(segmento: string): string {
   if (segmento.includes("Metalurgia")) {
     return "Num caso parecido, encontramos oportunidade em eletrodos de solda e discos de corte que já tinham sido classificados como uso e consumo padrão.";
@@ -251,10 +233,6 @@ function getExemploObjecao(segmento: string): string {
   return "Num caso parecido, encontramos oportunidade em peças de reposição e óleos industriais que já estavam classificados como consumo padrão.";
 }
 
-// ---- Modelo genérico do sistema (reserva) ----
-// Usado SOMENTE quando o pitch ativo não tem a seção correspondente. Sempre
-// que aparecer na tela, vem com um aviso deixando claro que é conteúdo do
-// sistema, não do script que o operador escreveu.
 function montarAberturaGenerica(
   nomeAtivo: string,
   segmentoInfo: ReturnType<typeof inferirSegmentoPorCnae>,
@@ -334,10 +312,6 @@ function montarObjecoesGenericas(
   ];
 }
 
-// Categorias comuns de objeção que o "Ir direto para" sempre mostra. Cada
-// uma tenta casar com uma objeção do pitch ativo por palavra-chave; se não
-// achar, o card correspondente fica travado (cinza) em vez de inventar
-// conteúdo — essa é a regra de ouro combinada com o Everton.
 const CATEGORIAS_CANONICAS: { id: string; label: string; icon: LucideIcon; keywords: RegExp }[] = [
   { id: "contador", label: "Já tem contador/fiscal", icon: Users, keywords: /contador|fiscal|jur[ií]dico|consultoria|revis(ei|ão|amos)/i },
   { id: "email", label: "Manda por e-mail", icon: Mail, keywords: /e-?mail|whatsapp/i },
@@ -364,75 +338,61 @@ export function PreLigacao({
   const [loadingCnpj, setLoadingCnpj] = useState(false);
   const [loadingGen, setLoadingGen] = useState(false);
   const [nomeBusca, setNomeBusca] = useState(pre0.nomeBusca ?? "");
-  // ---- Dados de confirmação da reunião (preenchidos no card "Fechou! Confirmar
-  // horário" do Fluxo da ligação) — persistidos no rascunho local da Pré-ligação
-  // igual aos demais campos, pra sobreviver a troca de aba/reload. ----
   const [reuniaoNome, setReuniaoNome] = useState((pre0 as Record<string, string>).reuniaoNome ?? "");
   const [reuniaoFuncao, setReuniaoFuncao] = useState((pre0 as Record<string, string>).reuniaoFuncao ?? "");
   const [reuniaoEmail, setReuniaoEmail] = useState((pre0 as Record<string, string>).reuniaoEmail ?? "");
   const [reuniaoData, setReuniaoData] = useState((pre0 as Record<string, string>).reuniaoData ?? "");
   const [reuniaoHora, setReuniaoHora] = useState((pre0 as Record<string, string>).reuniaoHora ?? "");
   const [modoEsteira, setModoEsteira] = useState<boolean>(true);
-  // Preparação (passos 1–3) recolhida automaticamente assim que o script é
-  // gerado, pra não competir com o Fluxo da ligação por espaço na tela.
   const [prepOpen, setPrepOpen] = useState<boolean>(true);
   const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
-  // ---- Estado do fluxo de cards de "Contornar objeções" (Pré-ligação) ----
-  // Nome do contato ativo, usado pra personalizar {NOME} nas respostas dos
-  // cards — atualizado toda vez que a IA extrai o nome ao gerar/compilar o script.
   const [nomeAtivo, setNomeAtivo] = useState<string>("");
-  // Nó ATUALMENTE ativo do fluxo da ligação (só um por vez — reflete "em que
-  // ponto da conversa eu estou agora"). null = fluxo ainda não iniciado.
   const [activeStep, setActiveStep] = useState<string | null>(null);
-  // Quais notas "extra" (ex: "insistiu que só o diretor decide") já foram reveladas.
   const [extrasRevelados, setExtrasRevelados] = useState<Set<string>>(new Set());
-  // Trilha da conversa, na ordem em que os nós foram visitados — desenha a
-  // "linha da vida" da ligação (estilo diagrama de sequência: abertura →
-  // objeção → objeção → desfecho). Voltar pra um nó já visitado PODA o trecho
-  // seguinte da trilha, porque a partir dali a conversa pode seguir por outro
-  // caminho.
   const [historicoObjecoes, setHistoricoObjecoes] = useState<string[]>([]);
-  // Ativado quando BrasilAPI/CNPJá falham (429/403/500 ou rede). Libera o preenchimento manual
-  // sem bloquear o operador durante a ligação (Graceful Degradation).
   const [contingenciaAtiva, setContingenciaAtiva] = useState<boolean>(false);
-  // "Conferir dados" (passo 2) só precisa ficar aberto quando os dados vieram
-  // de uma busca crua na API (BrasilAPI/CNPJá) — aí sim o operador precisa
-  // olhar e confirmar se é a empresa certa. Quando os dados já vêm prontos da
-  // Preparação Noturna (já conferidos antes), o passo começa recolhido.
   const [conferirDadosOpen, setConferirDadosOpen] = useState<boolean>(true);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
-  // Referência do bloco de script gerado — usada para rolar a tela até ele
-  // assim que a compilação/geração termina (o operador pode estar com a tela
-  // rolada pra baixo, na Textarea "Dados da empresa", e não perceber o script
-  // pronto aparecendo).
   const scriptSectionRef = useRef<HTMLDivElement | null>(null);
   function scrollToScript() {
     setTimeout(() => {
       scriptSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
   }
-  // "Dirty" flag: vira true assim que o operador edita manualmente a Textarea
-  // "Dados da empresa". Enquanto true, buscas automáticas (BrasilAPI,
-  // Preparação Noturna, ACTIVE_LEAD_EVENT) NÃO podem sobrescrever o campo.
   const dadosDirtyRef = useRef<boolean>(false);
 
-  // Escuta o evento disparado pela Preparação Noturna (sidebar) para carregar
-  // uma empresa direto na mesa de ação: preenche o textarea, define contexto
-  // ativo e rola até a seção "Dados da empresa".
+  // ---- Biblioteca de prompts: pitch ATIVO + seus "irmãos" de tema (pra
+  // resolver objeções que faltam no pitch ativo, passo 2 do fluxo de 3
+  // passos: pitch ativo → pitch irmão do mesmo tema → sistema). ----
+  const [libState, setLibState] = useState<PromptLibrary>(() =>
+    typeof window === "undefined"
+      ? { items: [], temas: [], activeTemaId: null, activeAbordagemId: null, activeHistoricoId: null }
+      : loadLibrary(),
+  );
+  useEffect(() => {
+    const h = () => setLibState(loadLibrary());
+    window.addEventListener(PROMPT_LIBRARY_EVENT, h);
+    setLibState(loadLibrary());
+    return () => window.removeEventListener(PROMPT_LIBRARY_EVENT, h);
+  }, []);
+  const activePromptItem = useMemo(
+    () => libState.items.find((p) => p.id === libState.activeAbordagemId) ?? null,
+    [libState],
+  );
+  const pitchesIrmaosDoTema = useMemo(() => {
+    if (!activePromptItem?.temaId) return [] as PromptItem[];
+    return getPromptsByTema(activePromptItem.temaId).filter((p) => p.id !== activePromptItem.id);
+  }, [activePromptItem, libState]);
+
+  // ---- Edição de card (card é espelho do pitch — editar aqui grava lá) ----
+  const [editandoCardId, setEditandoCardId] = useState<string | null>(null);
+  const [textoEdicao, setTextoEdicao] = useState("");
+
   useEffect(() => {
     function onLoad(ev: Event) {
       const detail = (ev as CustomEvent<PreHandoffPayload>).detail ?? {};
-
-      // NOVA EMPRESA vinda do Preparação Noturna: limpa TUDO da empresa
-      // anterior (CNPJ, dados colados, script compilado, resultados de
-      // busca, telefones, lead ativo, modo contingência) antes de aplicar os
-      // dados da nova empresa — evita ficar "dado em cima de dado" na tela.
-      // Também zera o "dirty flag": sem isso, se o operador tivesse editado
-      // manualmente os dados da empresa anterior, a proteção anti-sobrescrita
-      // impediria os dados da nova empresa de aparecerem.
       limparRascunhoPre();
-      clearRascunho(); // garante que o rascunho da Pós-ligação também é limpo,
-                        // mesmo que aquela aba não esteja montada agora
+      clearRascunho();
       setCurrentLeadState(null);
       setContingenciaAtiva(false);
       dadosDirtyRef.current = false;
@@ -453,8 +413,6 @@ export function PreLigacao({
       const telefone = (detail.telefone ?? "").trim();
       const email = (detail.email ?? "").trim();
       const cnpjDigits = (detail.cnpj ?? "").replace(/\D/g, "");
-      // Texto vindo da Preparação Noturna é dado bruto informado pelo operador.
-      // Ele deve ser preservado contra lookup automático durante a compilação.
       if (texto && !dadosDirtyRef.current) {
         setDados(texto);
         dadosDirtyRef.current = true;
@@ -462,8 +420,6 @@ export function PreLigacao({
       else if (texto && dadosDirtyRef.current) {
         toast.info("Mantendo suas edições no campo 'Dados da empresa'.");
       }
-      // Dados vindos da Preparação Noturna já foram conferidos antes —
-      // não precisa reabrir o passo "Conferir dados" por padrão.
       if (texto) setConferirDadosOpen(false);
       const nomePrincipal = razaoSocial || nome;
       if (cnpjDigits) setCnpj(cnpjDigits);
@@ -485,7 +441,6 @@ export function PreLigacao({
         const extras = [telefone, email].filter(Boolean).join(" · ");
         setEmpresaResumo(extras ? `${nomePrincipal} · ${extras}` : nomePrincipal);
       } else if (texto) {
-        // Sem nome extraído — tenta parse do texto bruto para liberar compilação
         const parsed = parseLeadFromDados(texto, "");
         if (parsed) {
           setCurrentLeadState(parsed);
@@ -494,8 +449,6 @@ export function PreLigacao({
         }
       }
       toast.success(nomePrincipal ? `Lead carregado: ${nomePrincipal}` : "Lead carregado no Pré-ligação");
-      // Com CNPJ estruturado vindo da Preparação Noturna, já busca os dados
-      // oficiais automaticamente (mesmo fluxo do botão manual).
       if (cnpjDigits.length === 14) {
         setTimeout(() => { void handleLookup(cnpjDigits); }, 80);
       }
@@ -504,13 +457,11 @@ export function PreLigacao({
       }, 60);
     }
     window.addEventListener(LOAD_PRE_LIGACAO_EVENT, onLoad as EventListener);
-    // Handoff da rota /preparacao — consome payload pendente após navegação
     try {
       const raw = window.sessionStorage.getItem(PENDING_PRE_LIGACAO_KEY);
       if (raw) {
         window.sessionStorage.removeItem(PENDING_PRE_LIGACAO_KEY);
         const detail = JSON.parse(raw) as PreHandoffPayload;
-        // pequeno atraso para garantir que outros efeitos de mount rodem antes
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent(LOAD_PRE_LIGACAO_EVENT, { detail }));
         }, 50);
@@ -519,10 +470,6 @@ export function PreLigacao({
     return () => window.removeEventListener(LOAD_PRE_LIGACAO_EVENT, onLoad as EventListener);
   }, []);
 
-
-
-
-  // Autosave: rascunho unificado + sessão ativa v2
   useEffect(() => {
     updateRascunho({
       pre: {
@@ -586,15 +533,12 @@ export function PreLigacao({
     toast.success("Tudo limpo. Pronto para uma nova prospecção.");
   }
 
-
-
   const [loadingBusca, setLoadingBusca] = useState(false);
   type Match = Awaited<ReturnType<typeof searchCompanyByName>>["itens"][number];
   const [resultados, setResultados] = useState<Match[]>([]);
 
   const [telefones, setTelefones] = useState<Telefones | null>((sess0.telefones as Telefones | null) ?? null);
   const [loadingFones, setLoadingFones] = useState(false);
-
 
   const runLookup = useServerFn(lookupCnpj);
   const runGenerate = useServerFn(generateWithAI);
@@ -612,8 +556,6 @@ export function PreLigacao({
     return resultado;
   }
 
-
-  // Normaliza nomes de empresa para comparação (sem acentos, sem sufixos societários).
   function normalizarNomeEmpresa(v: string) {
     return v
       .normalize("NFD")
@@ -624,13 +566,7 @@ export function PreLigacao({
       .trim();
   }
 
-
-
-
   async function handleLookup(preset?: string) {
-    // Aceita qualquer formato: 12.345.678/0001-90, 12345678000190, com espaços, etc.
-    // Usa sempre o estado React (nunca lê o DOM diretamente) — o campo "cnpj"
-    // já reflete o valor digitado/colado via onChange antes de qualquer chamada.
     const raw = (preset !== undefined ? preset : cnpj ?? "").toString();
     const digits = raw.replace(/[^\d]/g, "");
     if (digits.length === 0) {
@@ -641,7 +577,6 @@ export function PreLigacao({
       toast.error(`CNPJ deve ter 14 dígitos (você informou ${digits.length})`);
       return;
     }
-    // Sincroniza o campo com o valor limpo
     setCnpj(digits);
     setLoadingCnpj(true);
     setTelefones(null);
@@ -687,8 +622,6 @@ export function PreLigacao({
         .join("\n");
       if (!dadosDirtyRef.current) {
         setDados(bloco);
-        // Dados crus vindos direto da API: precisa que o operador olhe e
-        // confirme se é a empresa certa antes de compilar o script.
         setConferirDadosOpen(true);
       } else {
         toast.info("Mantendo suas edições no campo 'Dados da empresa' (busca automática não sobrescreveu).");
@@ -699,7 +632,6 @@ export function PreLigacao({
       );
       setResultados([]);
 
-      // Alimenta o estado do lead ativo para o Modo Esteira (compilação local sem IA)
       const cidade = (r.endereco ?? "").split("·").find((e) => e.includes("/"))?.trim()?.split("/")[0]?.trim() ?? "";
       const uf = (r.endereco ?? "").split("·").find((e) => e.includes("/"))?.trim()?.split("/")[1]?.trim() ?? "";
       const leadAtual = {
@@ -712,33 +644,24 @@ export function PreLigacao({
         endereco: r.endereco,
       };
       setCurrentLeadState(leadAtual);
-      // Espelha o lead ativo em sessionStorage para que a aba Pós-ligação
-      // consiga usar os dados estruturados no registro de atividades.
       setActiveLead(leadAtual);
 
       setContingenciaAtiva(false);
       toast.success("Dados carregados. Ajuste o prompt se quiser e depois processe o script.");
 
-
-      // Se já enriquecemos telefones para este CNPJ nesta sessão, restaura do cache.
       const cachedPhones = phonesCache.get(digits);
       if (cachedPhones) setTelefones(cachedPhones);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err ?? "");
-      // Detecta falhas típicas das bases públicas (rate limit, bloqueio ou queda)
-      // ou erros de rede/timeout — nesses casos entra em Modo Manual de Contingência
-      // em vez de limpar os campos já preenchidos pelo operador.
       const instavel = /\b(429|403|500|502|503|504)\b/.test(msg)
         || /rate.?limit|too many|timeout|network|fetch|failed to fetch|econnreset|enotfound/i.test(msg);
       if (instavel) {
         setContingenciaAtiva(true);
-        // Precisa que o campo de dados esteja visível pro operador colar manualmente.
         setConferirDadosOpen(true);
         toast.warning(
           "Bases públicas instáveis. O Modo Manual de Contingência foi ativado automaticamente.",
           { description: "Cole os dados da empresa direto no campo abaixo e siga com a ligação." },
         );
-        // Foca a Textarea para acelerar o preenchimento manual
         setTimeout(() => {
           const ta = document.getElementById("dados") as HTMLTextAreaElement | null;
           ta?.focus();
@@ -770,7 +693,6 @@ export function PreLigacao({
       phonesCache.set(digits, res);
       setTelefones(res);
       updateSessaoAtiva({ telefones: res });
-
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Falha ao buscar telefones");
     } finally {
@@ -778,14 +700,12 @@ export function PreLigacao({
     }
   }
 
-
   async function handleBuscaNome() {
     const termo = nomeBusca.trim();
     if (termo.length < 3) {
       toast.error("Digite ao menos 3 caracteres do nome / razão social");
       return;
     }
-    // Se o usuário colou um CNPJ aqui, faz o lookup direto
     const digits = termo.replace(/\D/g, "");
     if (digits.length === 14) {
       setCnpj(digits);
@@ -800,7 +720,6 @@ export function PreLigacao({
         toast.warning("Nenhuma empresa encontrada com esse nome");
         return;
       }
-      // Se só veio 1 resultado, já carrega os dados completos automaticamente
       if (r.itens.length === 1) {
         const unico = r.itens[0];
         setCnpj(unico.cnpj);
@@ -837,8 +756,6 @@ export function PreLigacao({
       const lead = { ...leadBase, contatoNome: nomeContatoIA };
       setCurrentLeadState(lead);
       setActiveLead(lead);
-      // Se o fluxo da ligação ainda não começou, inicia no nó "Abertura".
-      // Usa updater funcional pra não depender do valor "preso" no closure.
       setActiveStep((prev) => prev ?? "abertura");
       setHistoricoObjecoes((prev) => (prev.length ? prev : ["abertura"]));
       const hydratedPromptText = preencherTagsDoScript(promptText, lead, dados.trim(), nomeContatoIA);
@@ -848,7 +765,6 @@ export function PreLigacao({
       const cidadeValidada = lead.cidade?.trim() || "aí na região";
       const cidadeEstadoValidada = lead.cidade && lead.uf ? `${lead.cidade}/${lead.uf}` : cidadeValidada;
 
-      // 1. systemInstruction: papel + regras rígidas de extração/substituição
       const systemInstruction = `Você é um extrator de dados CIRÚRGICO da BHM Advogados. Sua única função é ler os dados do lead e preencher o template. É ESTRITAMENTE PROIBIDO INVENTAR informações ou alucinar.
 
 PRIORIDADE ABSOLUTA: se o bloco [VALORES VALIDADOS PELO SISTEMA] existir, use esses valores como fonte final para {NOME}, {SEGMENTO}, {INSUMOS}, {CIDADE} e {CIDADE_ESTADO}. Não reinterpretar esses campos.
@@ -879,8 +795,6 @@ REGRAS DE EXTRAÇÃO E PREENCHIMENTO:
 
 É TERMINANTEMENTE PROIBIDO manter chaves { } ou colchetes [ ] na resposta final. Retorne APENAS o diálogo do script totalmente preenchido.`;
 
-
-      // 2. userContent: dados do lead + template a ser preenchido
       const userContent = `[DADOS DO LEAD]:
 ${dados.trim()}
 
@@ -934,9 +848,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     }
   }
 
-  // Gravação 100% automática: começa junto com o script compilado. O VAD
-  // descarta sozinho a tentativa se nenhuma fala for detectada em 45s
-  // (discagem sem atendimento) — sem nenhum clique do operador.
   async function autoIniciarGravacao() {
     if (isRecording()) return;
     const nome =
@@ -952,14 +863,8 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     }
   }
 
-
-
-
   async function handleProcessScript() {
     if (modoEsteira) {
-      // Fallback do Modo Manual de Contingência: se a API pública falhou (ou
-      // ainda não rodou) e o operador colou os dados brutos direto na Textarea,
-      // extrai o lead do próprio texto para continuar a compilação local.
       let lead = parseLeadFromDados(dados, cnpj) ?? currentLeadState;
       if (!lead && dados.trim()) {
         lead = montarLeadFallback(dados, cnpj, empresaResumo);
@@ -1006,7 +911,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     void handleGenerate();
   }
 
-
   async function copyScript() {
     if (!script.trim()) {
       toast.error("Nenhum script gerado ainda");
@@ -1016,11 +920,9 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     toast.success("Script copiado");
   }
 
-  // Alt+S: copia o script de abordagem sem sair do fluxo de discagem.
   useHotkey({ key: "s", alt: true, allowInField: true }, () => {
     void copyScript();
   });
-
 
   function downloadScript() {
     const nome = (empresaResumo?.split("·")[0] ?? "script").trim().replace(/[^\w\s-]/g, "").replace(/\s+/g, "_") || "script";
@@ -1037,9 +939,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     toast.success("Download iniciado");
   }
 
-  // Barramento reativo: quando um card de follow-up (ou qualquer painel) dispara
-  // um novo lead ativo via setActiveLead(...), injetamos o CNPJ e rodamos o
-  // lookup automaticamente — dossiê + script em custo zero.
   const lookupRef = useRef(handleLookup);
   lookupRef.current = handleLookup;
   useEffect(() => {
@@ -1047,13 +946,9 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       const lead = getActiveLead();
       const digits = (lead?.cnpj ?? "").replace(/\D/g, "");
       if (digits.length !== 14) return;
-      // Só refaz se for um CNPJ diferente do atual (evita loop de auto-refresh)
       if (digits === (cnpj || "").replace(/\D/g, "")) return;
-      // Se o operador já editou manualmente o campo "Dados da empresa",
-      // NÃO dispara um novo lookup que sobrescreveria as edições.
       if (dadosDirtyRef.current) return;
       setCnpj(digits);
-      // Aguarda o próximo tick para que o input reflita o valor antes do lookup
       setTimeout(() => {
         void lookupRef.current(digits);
       }, 0);
@@ -1062,19 +957,11 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     return () => window.removeEventListener(ACTIVE_LEAD_EVENT, onLead);
   }, [cnpj]);
 
-  // ---- Fluxo da ligação (Abertura → Objeções → Desfecho) ----
-  // Modelado como um mapa de conversa: a ligação é a "linha da vida" (como no
-  // diagrama de sequência), e de QUALQUER nó dá pra seguir pra QUALQUER outro,
-  // porque a pessoa do outro lado pode reagir de um jeito totalmente diferente
-  // do esperado a qualquer momento.
   const nomeParaObjecoes = nomeAtivo || "tudo bem?";
   const segmentoInfo = useMemo(
     () => inferirSegmentoPorCnae(`${currentLeadState?.cnaePrincipal ?? ""}\n${dados}`),
     [currentLeadState, dados],
   );
-  // {CIDADE_ESTADO} da Abertura Principal — mesma regra usada na geração do
-  // script completo (handleGenerate): "Cidade/UF" quando os dois existem,
-  // senão só a cidade, senão "aí na região".
   const cidadeEstadoAtiva = useMemo(() => {
     const cidade = currentLeadState?.cidade?.trim() || "";
     const uf = currentLeadState?.uf?.trim() || "";
@@ -1083,11 +970,9 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
   }, [currentLeadState]);
 
   // ---- Cards do fluxo, derivados do PITCH ATIVO ----
-  // Lê o texto literal do prompt ativo (promptText) e separa em Abertura +
-  // Objeções. Regra de ouro: nunca inventa conteúdo de objeção — usa
-  // exatamente o que está escrito no pitch. Quando falta alguma parte, cai
-  // no modelo genérico do sistema (com aviso) ou trava o card específico
-  // (ver CATEGORIAS_CANONICAS acima).
+  // Para cada categoria de objeção, resolve em 3 passos: (1) pitch ativo,
+  // (2) outro pitch do MESMO tema/aba, (3) modelo genérico do sistema (com
+  // aviso). Nunca inventa: o que é do sistema é sempre identificado.
   const parsedPitch = useMemo(() => parsePitchIntoCards(promptText), [promptText]);
 
   const cardsCalculados = useMemo(() => {
@@ -1097,7 +982,8 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     const hidratarExtra = (e?: { gatilho: string; texto: string }) =>
       e ? { gatilho: e.gatilho, texto: hidratar(e.texto) } : undefined;
 
-    // ---- Abertura ----
+    // Abertura: não é "emprestada" de outro pitch do tema — só pitch próprio
+    // ou fallback do sistema (cada pitch tem a sua abertura).
     const aberturaFinal: ObjecaoCard = parsedPitch.abertura
       ? {
           id: "abertura",
@@ -1110,93 +996,108 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         }
       : { ...montarAberturaGenerica(nomeAtivo, segmentoInfo, cidadeEstadoAtiva), origem: "sistema" };
 
-    // ---- Objeções ----
+    const genericasMap = new Map(
+      montarObjecoesGenericas(nomeParaObjecoes, segmentoInfo).map((c) => [c.id, c]),
+    );
     const objecoesFinal: ObjecaoCard[] = [];
-    if (parsedPitch.objecoes.length === 0) {
-      // Pitch ativo não tem NENHUMA quebra de objeção escrita — usa o
-      // conjunto genérico do sistema inteiro, claramente identificado.
-      for (const c of montarObjecoesGenericas(nomeParaObjecoes, segmentoInfo)) {
-        objecoesFinal.push({ ...c, origem: "sistema" });
-      }
-    } else {
-      const usados = new Set<number>();
-      for (const cat of CATEGORIAS_CANONICAS) {
-        const idx = parsedPitch.objecoes.findIndex(
-          (p, i) => !usados.has(i) && cat.keywords.test(`${p.label} ${p.resposta}`),
-        );
-        if (idx >= 0) {
-          usados.add(idx);
-          const p = parsedPitch.objecoes[idx];
-          objecoesFinal.push({
-            id: cat.id,
-            label: p.label || cat.label,
-            icon: cat.icon,
-            kind: "objecao",
-            resposta: hidratar(p.resposta),
-            extra: hidratarExtra(p.extra),
-            origem: "pitch",
-          });
-        } else {
-          // Categoria comum não coberta pelo pitch ativo: trava em vez de
-          // inventar conteúdo — a regra de ouro combinada com o Everton.
-          objecoesFinal.push({
-            id: cat.id,
-            label: cat.label,
-            icon: cat.icon,
-            kind: "objecao",
-            resposta: "",
-            travado: true,
-            origem: "sistema",
-          });
-        }
-      }
-      // Objeções do pitch que não bateram com nenhuma categoria comum viram
-      // cards extras — conteúdo real do usuário, fora do padrão.
-      parsedPitch.objecoes.forEach((p, i) => {
-        if (usados.has(i)) return;
+    const usados = new Set<number>();
+
+    for (const cat of CATEGORIAS_CANONICAS) {
+      // Passo 1: pitch ativo
+      const idx = parsedPitch.objecoes.findIndex(
+        (p, i) => !usados.has(i) && cat.keywords.test(`${p.label} ${p.resposta}`),
+      );
+      if (idx >= 0) {
+        usados.add(idx);
+        const p = parsedPitch.objecoes[idx];
         objecoesFinal.push({
-          id: p.id,
-          label: p.label,
-          icon: HelpCircle,
+          id: cat.id,
+          label: p.label || cat.label,
+          icon: cat.icon,
           kind: "objecao",
           resposta: hidratar(p.resposta),
           extra: hidratarExtra(p.extra),
           origem: "pitch",
         });
+        continue;
+      }
+
+      // Passo 2: outro pitch do mesmo tema
+      const emprestada = encontrarObjecaoEmOutrosPitchesDoTema(pitchesIrmaosDoTema, cat.keywords);
+      if (emprestada) {
+        objecoesFinal.push({
+          id: cat.id,
+          label: emprestada.card.label || cat.label,
+          icon: cat.icon,
+          kind: "objecao",
+          resposta: hidratar(emprestada.card.resposta),
+          extra: hidratarExtra(emprestada.card.extra),
+          origem: "pitch-tema",
+          origemPitchId: emprestada.pitchOrigemId,
+          origemPitchNome: emprestada.pitchOrigemNome,
+        });
+        continue;
+      }
+
+      // Passo 3: fallback genérico do sistema (por categoria)
+      const generico = genericasMap.get(cat.id);
+      objecoesFinal.push({
+        id: cat.id,
+        label: generico?.label ?? cat.label,
+        icon: cat.icon,
+        kind: "objecao",
+        resposta: generico ? hidratar(generico.resposta) : "",
+        extra: generico?.extra ? hidratarExtra(generico.extra) : undefined,
+        origem: "sistema",
       });
     }
 
-    return { aberturaFinal, objecoesFinal, usandoFallbackObjecoes: parsedPitch.objecoes.length === 0 };
-  }, [parsedPitch, currentLeadState, dados, cnpj, empresaResumo, nomeAtivo, nomeParaObjecoes, segmentoInfo, cidadeEstadoAtiva]);
+    // Objeções do pitch ativo que não bateram com nenhuma categoria comum
+    // viram cards extras — conteúdo real do usuário, fora do padrão.
+    parsedPitch.objecoes.forEach((p, i) => {
+      if (usados.has(i)) return;
+      objecoesFinal.push({
+        id: p.id,
+        label: p.label,
+        icon: HelpCircle,
+        kind: "objecao",
+        resposta: hidratar(p.resposta),
+        extra: hidratarExtra(p.extra),
+        origem: "pitch",
+      });
+    });
+
+    return { aberturaFinal, objecoesFinal };
+  }, [
+    parsedPitch,
+    currentLeadState,
+    dados,
+    cnpj,
+    empresaResumo,
+    nomeAtivo,
+    nomeParaObjecoes,
+    segmentoInfo,
+    cidadeEstadoAtiva,
+    pitchesIrmaosDoTema,
+  ]);
 
   const abertura = cardsCalculados.aberturaFinal;
   const objecoes = cardsCalculados.objecoesFinal;
-  const usandoFallbackObjecoes = cardsCalculados.usandoFallbackObjecoes;
 
-  /** Navega o fluxo até o nó `id`. Se `id` já estiver na trilha (o operador
-   * está voltando pra um ponto anterior da conversa), poda tudo que vinha
-   * depois dele — daqui pra frente a conversa pode seguir por outro caminho. */
   function irParaStep(id: string) {
     setActiveStep(id);
+    setEditandoCardId(null);
     setHistoricoObjecoes((prev) => {
       const idx = prev.indexOf(id);
       if (idx !== -1) return prev.slice(0, idx + 1);
       return [...prev, id];
     });
-    // A partir do momento em que o operador navega ativamente pelo Fluxo da
-    // ligação, o bloco "Script gerado" (passo 3) vira informação redundante
-    // na tela — recolhe automaticamente pra liberar espaço. Continua acessível
-    // pelo toggle "▼ Script gerado" a qualquer momento.
     setScriptOpen(false);
     setTimeout(() => {
       document.getElementById(`objecao-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 60);
   }
 
-  // Pré-preenche os dados de confirmação da reunião a partir do contato já
-  // identificado (ex: "Rafaela (Assistente Financeiro)") assim que o operador
-  // chega no card de fechamento — só quando o campo ainda está vazio, pra
-  // nunca sobrescrever o que o operador já digitou.
   useEffect(() => {
     if (activeStep !== "fechamento" || reuniaoNome) return;
     const contato = currentLeadState?.contatoNome?.trim();
@@ -1228,6 +1129,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
   function fecharStep() {
     setActiveStep(null);
+    setEditandoCardId(null);
   }
 
   function toggleExtra(id: string) {
@@ -1239,9 +1141,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     });
   }
 
-  // Remove linhas de "direção de cena" (entre colchetes, ex: "[pausa de 1
-  // segundo...]") antes de copiar — são um lembrete pro operador, não parte
-  // do texto a ser colado/enviado.
   async function copyObjecaoResposta(texto: string) {
     const limpo = texto
       .split("\n")
@@ -1250,6 +1149,50 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       .trim();
     await navigator.clipboard.writeText(limpo);
     toast.success("Resposta copiada");
+  }
+
+  // ---- Edição de card (card é espelho do pitch ativo) ----
+  function textoBrutoParaEdicao(card: ObjecaoCard): string {
+    if (card.kind === "abertura") return parsedPitch.abertura?.resposta ?? "";
+    const achado = parsedPitch.objecoes.find((o) => o.label === card.label);
+    return achado?.resposta ?? "";
+  }
+
+  function iniciarEdicaoCard(card: ObjecaoCard) {
+    setTextoEdicao(textoBrutoParaEdicao(card));
+    setEditandoCardId(card.id);
+  }
+
+  function cancelarEdicaoCard() {
+    setEditandoCardId(null);
+    setTextoEdicao("");
+  }
+
+  function salvarEdicaoCard(card: ObjecaoCard) {
+    if (!activePromptItem) {
+      toast.error("Não identifiquei o pitch ativo — nada foi salvo. Recarregue a página e tente de novo.");
+      return;
+    }
+    if (!textoEdicao.trim()) {
+      toast.error("O texto não pode ficar vazio.");
+      return;
+    }
+    const alvo = card.kind === "abertura" ? ({ tipo: "abertura" } as const) : ({ tipo: "objecao", label: card.label } as const);
+    const { textoAtualizado, encontrou } = atualizarSecaoDoPitch(activePromptItem.conteudo, alvo, textoEdicao.trim());
+    if (!encontrou) {
+      toast.error("Não encontrei essa seção dentro do pitch pra atualizar. Nada foi alterado — me avisa que eu olho.");
+      return;
+    }
+    updatePrompt(activePromptItem.id, { conteudo: textoAtualizado });
+    toast.success("Card atualizado — já gravado no pitch.");
+    setEditandoCardId(null);
+    setTextoEdicao("");
+  }
+
+  function irEditarPitchDeOrigem(card: ObjecaoCard) {
+    if (!card.origemPitchId) return;
+    setActivePrompt("abordagem", card.origemPitchId);
+    toast.info(`"${card.origemPitchNome}" agora é o pitch ativo. Abra "Biblioteca de prompts" acima pra editar essa objeção.`);
   }
 
   const terminais: ObjecaoCard[] = [
@@ -1317,11 +1260,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
         <PromptLibraryPanel tipo="abordagem" />
 
-        {/* Preparação (passos 1–3): fica aberta enquanto o operador monta a
-            ligação, mas recolhe sozinha assim que o script é gerado — a
-            partir daí o que importa em tela é o Fluxo da ligação (passo 4).
-            Sempre dá pra reabrir clicando na barra abaixo, ex: pra corrigir
-            um dado ou recompilar o script. */}
         <Collapsible open={prepOpen} onOpenChange={setPrepOpen}>
           <CollapsibleTrigger asChild>
             <button
@@ -1357,10 +1295,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         )}
 
         <div className="space-y-2">
-          {/* Campo único: cola/digita CNPJ OU razão social/nome fantasia/sócio
-              na mesma linha. handleBuscaNome() já detecta sozinho se o texto
-              é um CNPJ completo (14 dígitos) e roteia pro lookup certo — não
-              precisa mais de abas separadas "CNPJ" / "Razão social". */}
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -1471,8 +1405,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             </div>
           )}
 
-
-
           {(loadingFones || telefones) && (
             <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
               <div className="flex items-center justify-between gap-2">
@@ -1566,9 +1498,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
             </div>
           )}
 
-
         </div>
-
 
         <Collapsible
           open={conferirDadosOpen}
@@ -1638,7 +1568,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           </CollapsibleContent>
         </Collapsible>
 
-
         <div className="flex items-center gap-2 border-t border-border/60 pt-3">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
             3
@@ -1701,7 +1630,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
 
           </CollapsibleContent>
         </Collapsible>
-
 
         {script && (
           <div ref={scriptSectionRef}>
@@ -1790,9 +1718,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               </Button>
             )}
 
-            {/* Linha da vida da ligação: cada nó visitado é uma etapa conectada,
-                estilo diagrama de sequência. Clicar num nó anterior volta pra
-                ele e poda o que vinha depois (a conversa pode divergir dali). */}
             {historicoObjecoes.length > 0 && (
               <div className="mb-3 flex flex-wrap items-center gap-1">
                 {historicoObjecoes.map((id, idx) => {
@@ -1821,27 +1746,15 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               </div>
             )}
 
-            {/* Aviso quando parte do fluxo está vindo do modelo genérico do
-                sistema (o pitch ativo não tem essa parte escrita). */}
-            {(abertura.origem === "sistema" || usandoFallbackObjecoes) && (
+            {abertura.origem === "sistema" && (
               <div className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
                 <span className="mt-0.5 shrink-0">⚠️</span>
                 <span>
-                  {abertura.origem === "sistema" && usandoFallbackObjecoes
-                    ? 'Seu script ativo não tem "1. ABERTURA PRINCIPAL" nem seções "OBJEÇÃO —" — os cards abaixo são o modelo genérico do sistema, não vieram do seu texto.'
-                    : abertura.origem === "sistema"
-                      ? 'A abertura abaixo é o modelo genérico do sistema — seu script ativo não tem uma seção "1. ABERTURA PRINCIPAL".'
-                      : 'As objeções abaixo são o modelo genérico do sistema — seu script ativo não tem seções "OBJEÇÃO —".'}
+                  A abertura abaixo é o modelo genérico do sistema — seu pitch ativo não tem uma seção "1. ABERTURA PRINCIPAL".
                 </span>
               </div>
             )}
 
-            {/* Acesso direto: pula pra qualquer nó do fluxo a qualquer momento —
-                a conversa real não segue uma ordem fixa. Cards travados (cinza,
-                borda tracejada) são situações comuns que o script ativo ainda
-                não cobre — em vez de inventar uma resposta, o sistema trava o
-                botão até você escrever essa objeção no pitch (ou pedir pra
-                criar um card específico). */}
             <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
               Ir direto para
             </p>
@@ -1849,29 +1762,29 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               {[abertura, ...objecoes].map((obj) => {
                 const Icon = obj.icon;
                 const isCurrent = obj.id === activeStep;
-                const travado = obj.travado === true;
                 return (
                   <button
                     key={obj.id}
                     type="button"
-                    disabled={travado}
-                    title={
-                      travado
-                        ? "Sem card pra essa situação no script ativo. Escreva essa objeção no pitch (ou peça pra criar um card específico)."
-                        : undefined
-                    }
-                    onClick={() => {
-                      if (travado) return;
-                      isCurrent ? fecharStep() : irParaStep(obj.id);
-                    }}
-                    className={`flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
-                      travado
-                        ? "cursor-not-allowed border-dashed border-border/40 bg-muted/10 text-muted-foreground/40"
-                        : isCurrent
-                          ? "border-primary bg-primary/10 text-primary shadow-sm"
-                          : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+                    onClick={() => (isCurrent ? fecharStep() : irParaStep(obj.id))}
+                    className={`relative flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
+                      isCurrent
+                        ? "border-primary bg-primary/10 text-primary shadow-sm"
+                        : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
                     }`}
                   >
+                    {obj.origem === "sistema" && (
+                      <span
+                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400"
+                        title="Gerado pelo sistema"
+                      />
+                    )}
+                    {obj.origem === "pitch-tema" && (
+                      <span
+                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-sky-400"
+                        title={`Veio de outro pitch do tema: ${obj.origemPitchNome}`}
+                      />
+                    )}
                     <Icon className="h-4 w-4" />
                     {obj.label}
                   </button>
@@ -1879,7 +1792,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               })}
             </div>
 
-            {/* Nó ativo: só um por vez — representa "onde a conversa está agora". */}
             {cardAtivo && (
               <div
                 id={`objecao-${cardAtivo.id}`}
@@ -1909,8 +1821,39 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                         Gerado pelo sistema
                       </span>
                     )}
+                    {cardAtivo.origem === "pitch-tema" && (
+                      <span className="rounded bg-sky-200/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/50 dark:text-sky-300">
+                        Veio de: {cardAtivo.origemPitchNome}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
+                    {editandoCardId !== cardAtivo.id && cardAtivo.kind !== "terminal" && (
+                      <>
+                        {cardAtivo.origem === "pitch" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={() => iniciarEdicaoCard(cardAtivo)}
+                          >
+                            <Pencil className="mr-1 h-3 w-3" />
+                            Editar
+                          </Button>
+                        )}
+                        {cardAtivo.origem === "pitch-tema" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={() => irEditarPitchDeOrigem(cardAtivo)}
+                          >
+                            <Pencil className="mr-1 h-3 w-3" />
+                            Editar no pitch de origem
+                          </Button>
+                        )}
+                      </>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -1931,19 +1874,43 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   </div>
                 </div>
 
-                <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {cardAtivo.resposta.split("\n").map((linha, i) =>
-                    /^\s*\[.*\]\s*$/.test(linha) ? (
-                      <p key={i} className="my-1 text-xs italic text-muted-foreground">
-                        {linha.replace(/^\s*\[|\]\s*$/g, "")}
-                      </p>
-                    ) : (
-                      <p key={i}>{linha}</p>
-                    ),
-                  )}
-                </div>
+                {editandoCardId === cardAtivo.id ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      value={textoEdicao}
+                      onChange={(e) => setTextoEdicao(e.target.value)}
+                      rows={6}
+                      className="text-sm"
+                      placeholder='Escreva a fala aqui, sem aspas " " dentro do texto.'
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Evite usar aspas dentro do texto — elas marcam o começo/fim da fala no formato do pitch. Se digitar, viram aspas simples (') automaticamente.
+                    </p>
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={cancelarEdicaoCard}>
+                        Cancelar
+                      </Button>
+                      <Button size="sm" className="h-7 text-[11px]" onClick={() => salvarEdicaoCard(cardAtivo)}>
+                        <Check className="mr-1 h-3 w-3" />
+                        Salvar no pitch
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                    {cardAtivo.resposta.split("\n").map((linha, i) =>
+                      /^\s*\[.*\]\s*$/.test(linha) ? (
+                        <p key={i} className="my-1 text-xs italic text-muted-foreground">
+                          {linha.replace(/^\s*\[|\]\s*$/g, "")}
+                        </p>
+                      ) : (
+                        <p key={i}>{linha}</p>
+                      ),
+                    )}
+                  </div>
+                )}
 
-                {cardAtivo.extra && (
+                {cardAtivo.extra && editandoCardId !== cardAtivo.id && (
                   <div className="mt-2">
                     {!extrasRevelados.has(cardAtivo.id) ? (
                       <Button
@@ -1962,7 +1929,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   </div>
                 )}
 
-                {cardAtivo.routing && (
+                {cardAtivo.routing && editandoCardId !== cardAtivo.id && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {cardAtivo.routing.map((r) => (
                       <Button
@@ -2064,7 +2031,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                   </div>
                 )}
 
-                {cardAtivo.kind !== "terminal" && (
+                {cardAtivo.kind !== "terminal" && editandoCardId !== cardAtivo.id && (
                   <div className="mt-3 border-t border-border/60 pt-2">
                     <div className="flex flex-wrap gap-1.5">
                       <Button
