@@ -1052,7 +1052,6 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       // Se o operador já editou manualmente o campo "Dados da empresa",
       // NÃO dispara um novo lookup que sobrescreveria as edições.
       if (dadosDirtyRef.current) return;
-      setSearchMode("cnpj");
       setCnpj(digits);
       // Aguarda o próximo tick para que o input reflita o valor antes do lookup
       setTimeout(() => {
