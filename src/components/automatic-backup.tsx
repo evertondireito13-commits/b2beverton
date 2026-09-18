@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, Cloud, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Cloud, Loader2 } from "lucide-react";
 import { getConsultor, getSessionConsultor } from "@/lib/historico-store";
 import { getBestAppDataBackup, saveAppDataBackup } from "@/lib/data-backup.functions";
 import {
@@ -93,29 +93,49 @@ export function AutomaticBackup() {
     };
   }, [runBackup, scheduleBackup]);
 
+  const lastSavedLabel = lastSavedAt
+    ? new Date(lastSavedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    : null;
+
   const label = state === "saving"
-    ? "Salvando dados"
+    ? "Salvando…"
     : state === "error"
-      ? "Backup aguardando conexão"
-      : lastSavedAt
-        ? `Dados protegidos · ${new Date(lastSavedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
-        : "Proteção automática ativa";
+      ? "Erro ao salvar — clique para tentar novamente"
+      : state === "saved" && lastSavedLabel
+        ? `Salvo agora · última sincronização às ${lastSavedLabel}`
+        : lastSavedLabel
+          ? `Última sincronização às ${lastSavedLabel}`
+          : "Proteção automática ativa";
+
+  const tooltip = state === "error"
+    ? "O último backup falhou. Seus dados continuam salvos neste dispositivo — clique para tentar sincronizar de novo agora."
+    : "Empresas, históricos e preparação são copiados automaticamente para o cofre seguro.";
 
   return (
-    <div
+    <button
+      type="button"
       role="status"
       aria-live="polite"
-      title="Empresas, históricos e preparação são copiados automaticamente para o cofre seguro."
-      className="fixed bottom-3 right-3 z-40 flex h-8 items-center gap-2 rounded-md border border-border bg-background/95 px-3 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur"
+      title={tooltip}
+      onClick={state === "error" ? () => void runBackup("automatic") : undefined}
+      disabled={state !== "error"}
+      className={
+        "fixed bottom-3 right-3 z-40 flex h-8 items-center gap-2 rounded-md border px-3 text-xs font-medium shadow-sm backdrop-blur transition-colors " +
+        (state === "error"
+          ? "cursor-pointer border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15"
+          : "border-border bg-background/95 text-muted-foreground")
+      }
     >
       {state === "saving" ? (
         <Loader2 className="size-3.5 animate-spin text-primary" />
+      ) : state === "error" ? (
+        <AlertCircle className="size-3.5" />
       ) : state === "saved" ? (
         <CheckCircle2 className="size-3.5 text-primary" />
       ) : (
         <Cloud className="size-3.5 text-primary" />
       )}
       <span>{label}</span>
-    </div>
+    </button>
   );
 }
