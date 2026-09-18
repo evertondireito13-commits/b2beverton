@@ -15,9 +15,15 @@ import {
   setActivePrompt,
   PROMPT_LIBRARY_EVENT,
   syncLibraryFromCloud,
+  getPromptsByTema,
+  createTema,
+  renomearTema,
+  excluirTema,
+  setActiveTema,
   type PromptItem,
   type PromptTipo,
   type PromptLibrary,
+  type Tema,
 } from "@/lib/prompts-store";
 
 import {
@@ -102,6 +108,9 @@ import {
   Trash2,
   Link2,
   History as HistoryIcon,
+  Plus,
+  Pencil,
+  X as XIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -141,10 +150,14 @@ import { CopyButton, loadSessaoAtiva, updateSessaoAtiva } from "@/routes/index";
 
 
 /**
- * Biblioteca de Prompts (por operador). Substitui o antigo editor único e
- * permite criar, nomear, editar, excluir e alternar entre múltiplos prompts
- * de "abordagem" e "histórico". O prompt marcado como ATIVO é o que a IA usa
- * (via getActivePromptText no fluxo de geração).
+ * Biblioteca de Prompts (por operador), organizada em ABAS POR TEMA/TESE
+ * (ex: "ICMS Intermediário", "Exclusão do ICMS da base do PIS/COFINS").
+ * Cada aba guarda N prompts de "abordagem" (pitches) daquele tema. Prompts de
+ * "histórico" não têm tema — continuam numa lista única, sem abas.
+ *
+ * O prompt marcado como ATIVO (dentre TODOS os temas) é o que a IA usa (via
+ * getActivePromptText no fluxo de geração) — trocar de aba só muda o que
+ * você está VENDO/EDITANDO, não troca sozinho qual pitch está ativo.
  *
  * Regra fundamental: o conteúdo é armazenado e enviado LITERALMENTE — nenhuma
  * substituição, molde ou fallback silencioso é aplicado.
@@ -153,12 +166,16 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
   const [open, setOpen] = useState(false);
   const [lib, setLib] = useState<PromptLibrary>(() =>
     typeof window === "undefined"
-      ? { items: [], activeAbordagemId: null, activeHistoricoId: null }
+      ? { items: [], temas: [], activeTemaId: null, activeAbordagemId: null, activeHistoricoId: null }
       : loadLibrary(),
   );
   const [editing, setEditing] = useState<PromptItem | null>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoConteudo, setNovoConteudo] = useState("");
+  const [criandoTema, setCriandoTema] = useState(false);
+  const [novoTemaNome, setNovoTemaNome] = useState("");
+  const [renomeandoTemaId, setRenomeandoTemaId] = useState<string | null>(null);
+  const [renomeTemaNome, setRenomeTemaNome] = useState("");
 
   useEffect(() => {
     const h = () => setLib(loadLibrary());
@@ -177,10 +194,20 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
     };
   }, []);
 
+  const usaTemas = tipo === "abordagem";
+  const activeTemaId = usaTemas ? lib.activeTemaId : null;
+  const temaAtivo = usaTemas ? lib.temas.find((t) => t.id === activeTemaId) ?? null : null;
 
-  const items = lib.items.filter((p) => p.tipo === tipo);
+  // Lista de itens visível: para "abordagem", filtra pela aba ativa; para
+  // "historico", continua sem filtro (não tem aba).
+  const items = lib.items.filter((p) => {
+    if (p.tipo !== tipo) return false;
+    if (!usaTemas) return true;
+    return p.temaId === activeTemaId;
+  });
   const activeId = tipo === "abordagem" ? lib.activeAbordagemId : lib.activeHistoricoId;
-  const ativo = items.find((p) => p.id === activeId) ?? null;
+  const ativo = lib.items.find((p) => p.id === activeId && p.tipo === tipo) ?? null;
+  const ativoEstaNaAbaAtual = !ativo || ativo.temaId === activeTemaId;
   const rotulo = tipo === "abordagem" ? "Prompt de abordagem" : "Prompt de histórico";
 
   function resetForm() {
@@ -191,7 +218,7 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
 
   function beginNovo() {
     resetForm();
-    setEditing({ id: "", nome: "", conteudo: "", tipo });
+    setEditing({ id: "", nome: "", conteudo: "", tipo, temaId: usaTemas ? activeTemaId : null });
     setNovoNome("");
     setNovoConteudo("");
   }
@@ -205,7 +232,7 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
   function salvarForm() {
     if (!editing) return;
     if (!novoNome.trim()) {
-      toast.error("Dê um nome ao prompt (ex.: Estratégia ICMS).");
+      toast.error("Dê um nome ao prompt (ex.: Abordagem direta, Variação mais curta).");
       return;
     }
     if (!novoConteudo.trim()) {
@@ -216,7 +243,7 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
       updatePrompt(editing.id, { nome: novoNome, conteudo: novoConteudo });
       toast.success("Prompt atualizado");
     } else {
-      const criado = createPrompt(tipo, novoNome, novoConteudo);
+      const criado = createPrompt(tipo, novoNome, novoConteudo, usaTemas ? activeTemaId : null);
       setActivePrompt(tipo, criado.id);
       toast.success("Prompt criado e marcado como ativo");
     }
@@ -233,6 +260,53 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
   function ativar(p: PromptItem) {
     setActivePrompt(tipo, p.id);
     toast.success(`"${p.nome}" agora é o ${rotulo.toLowerCase()} ativo`);
+  }
+
+  function trocarAba(temaId: string) {
+    setActiveTema(temaId);
+    setLib(loadLibrary());
+    resetForm();
+  }
+
+  function confirmarNovoTema() {
+    if (!novoTemaNome.trim()) {
+      toast.error("Dê um nome pro tema (ex.: Exclusão do ICMS da base do PIS/COFINS).");
+      return;
+    }
+    const tema = createTema(novoTemaNome);
+    setLib(loadLibrary());
+    setActiveTema(tema.id);
+    setLib(loadLibrary());
+    setNovoTemaNome("");
+    setCriandoTema(false);
+    toast.success(`Aba "${tema.nome}" criada`);
+  }
+
+  function confirmarRenomeTema(temaId: string) {
+    if (!renomeTemaNome.trim()) {
+      setRenomeandoTemaId(null);
+      return;
+    }
+    renomearTema(temaId, renomeTemaNome);
+    setLib(loadLibrary());
+    setRenomeandoTemaId(null);
+    toast.success("Aba renomeada");
+  }
+
+  function apagarTema(tema: Tema) {
+    const pitchesNoTema = getPromptsByTema(tema.id);
+    if (pitchesNoTema.length > 0) {
+      toast.error(
+        `A aba "${tema.nome}" ainda tem ${pitchesNoTema.length} pitch(es). Mova ou apague os pitches antes de excluir a aba.`,
+      );
+      return;
+    }
+    if (!confirm(`Excluir a aba "${tema.nome}"? Essa ação não pode ser desfeita.`)) return;
+    const ok = excluirTema(tema.id);
+    if (ok) {
+      setLib(loadLibrary());
+      toast.success("Aba excluída");
+    }
   }
 
   return (
@@ -255,10 +329,122 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t p-3 space-y-3">
+
+        {usaTemas && (
+          <div className="space-y-2 border-b border-border/60 pb-3">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {lib.temas.map((t) => {
+                const isTabAtiva = t.id === activeTemaId;
+                if (renomeandoTemaId === t.id) {
+                  return (
+                    <div key={t.id} className="flex items-center gap-1">
+                      <Input
+                        autoFocus
+                        value={renomeTemaNome}
+                        onChange={(e) => setRenomeTemaNome(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") confirmarRenomeTema(t.id);
+                          if (e.key === "Escape") setRenomeandoTemaId(null);
+                        }}
+                        className="h-7 w-40 text-xs"
+                      />
+                      <Button size="sm" variant="ghost" className="h-7 px-1.5" onClick={() => confirmarRenomeTema(t.id)}>
+                        <Check className="h-3 w-3" />
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 px-1.5" onClick={() => setRenomeandoTemaId(null)}>
+                        <XIcon className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={t.id} className="group flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => trocarAba(t.id)}
+                      className={`rounded-t-md border-b-2 px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        isTabAtiva
+                          ? "border-navy-deep bg-navy-deep/10 text-navy-deep"
+                          : "border-transparent text-muted-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      {t.nome}
+                    </button>
+                    {isTabAtiva && (
+                      <span className="ml-0.5 hidden items-center gap-0.5 group-hover:flex">
+                        <button
+                          type="button"
+                          title="Renomear aba"
+                          onClick={() => {
+                            setRenomeandoTemaId(t.id);
+                            setRenomeTemaNome(t.nome);
+                          }}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Excluir aba"
+                          onClick={() => apagarTema(t)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+
+              {criandoTema ? (
+                <div className="flex items-center gap-1">
+                  <Input
+                    autoFocus
+                    placeholder="Nome do novo tema"
+                    value={novoTemaNome}
+                    onChange={(e) => setNovoTemaNome(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") confirmarNovoTema();
+                      if (e.key === "Escape") setCriandoTema(false);
+                    }}
+                    className="h-7 w-48 text-xs"
+                  />
+                  <Button size="sm" variant="ghost" className="h-7 px-1.5" onClick={confirmarNovoTema}>
+                    <Check className="h-3 w-3" />
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-1.5" onClick={() => setCriandoTema(false)}>
+                    <XIcon className="h-3 w-3" />
+                  </Button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setCriandoTema(true)}
+                  className="flex items-center gap-1 rounded-t-md border-b-2 border-transparent px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted/60"
+                >
+                  <Plus className="h-3 w-3" />
+                  Nova aba
+                </button>
+              )}
+            </div>
+
+            {!ativoEstaNaAbaAtual && ativo && (
+              <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                O prompt ativo agora ("{ativo.nome}") está em outra aba. Trocar de aba só muda o que você
+                está vendo — não troca sozinho qual pitch é usado na ligação.
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] text-muted-foreground">
-            Ativo agora: <b>{ativo?.nome ?? "nenhum"}</b>. Salve várias abordagens (ex.: ICMS/IPI,
-            Subvenção, PIS/COFINS) e alterne com um clique. O texto vai LITERAL para a IA.
+            Ativo agora: <b>{ativo?.nome ?? "nenhum"}</b>.
+            {usaTemas
+              ? " Cada aba é um tema/tese; salve quantos pitches quiser dentro de cada uma."
+              : " Salve variações e alterne com um clique."}
+            {" "}O texto vai LITERAL para a IA.
           </p>
           <Button size="sm" variant="secondary" onClick={beginNovo}>
             + Novo prompt
@@ -267,7 +453,9 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
 
         {items.length === 0 ? (
           <div className="rounded border border-dashed p-3 text-center text-xs text-muted-foreground">
-            Nenhum prompt salvo. Clique em <b>+ Novo prompt</b> para criar o primeiro.
+            {usaTemas && temaAtivo
+              ? <>Nenhum prompt salvo na aba <b>{temaAtivo.nome}</b> ainda. Clique em <b>+ Novo prompt</b> para criar o primeiro.</>
+              : <>Nenhum prompt salvo. Clique em <b>+ Novo prompt</b> para criar o primeiro.</>}
           </div>
         ) : (
           <ul className="space-y-1.5">
@@ -319,13 +507,14 @@ export function PromptLibraryPanel({ tipo }: { tipo: PromptTipo }) {
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-wide">
                 {editing.id ? "Editar prompt" : "Novo prompt"}
+                {usaTemas && temaAtivo && !editing.id ? ` — aba "${temaAtivo.nome}"` : ""}
               </span>
               <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px]" onClick={resetForm}>
                 Cancelar
               </Button>
             </div>
             <Input
-              placeholder="Nome do prompt (ex.: Estratégia ICMS)"
+              placeholder="Nome do prompt (ex.: Abordagem direta)"
               value={novoNome}
               onChange={(e) => setNovoNome(e.target.value)}
               className="h-8 text-xs"
@@ -928,8 +1117,9 @@ export function parseLeadFromDados(texto: string, cnpjInput?: string): ActiveLea
 // REGRA DE OURO (igual à da Biblioteca de Prompts): nunca inventamos conteúdo
 // de objeção. Se a seção não existe no pitch, ela simplesmente não é gerada
 // aqui — quem decide o que fazer na ausência dela é o componente que usa este
-// parser (pre-ligacao.tsx), que trava o card correspondente em vez de
-// inventar uma resposta.
+// parser (pre-ligacao.tsx), que trava o card correspondente, empresta de
+// outro pitch do mesmo tema, ou cai no fallback genérico do sistema (nessa
+// ordem), em vez de inventar uma resposta.
 // =============================================================================
 
 export type ParsedPitchCard = {
@@ -951,6 +1141,10 @@ const NOTAS_EXECUCAO_RE = /^\s*notas?\s+de\s+execu[cç][aã]o\b/i;
 
 function removerAcentos(v: string): string {
   return v.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizarParaComparar(v: string): string {
+  return removerAcentos(v).toLowerCase().trim().replace(/\s+/g, " ");
 }
 
 function slugificarLabel(v: string): string {
@@ -1042,4 +1236,131 @@ export function parsePitchIntoCards(pitchText: string): ParsedPitch {
   }
 
   return { abertura, objecoes, isFallback: objecoes.length === 0 };
+}
+
+// =============================================================================
+// PASSO 2 DA RESOLUÇÃO DE OBJEÇÃO: EMPRÉSTIMO ENTRE PITCHES DO MESMO TEMA
+// -----------------------------------------------------------------------------
+// Quando o pitch ATIVO não tem uma categoria de objeção, procura essa mesma
+// categoria em OUTROS pitches do MESMO tema/aba (nunca de tema diferente).
+// Devolve também de qual pitch veio, para a tela avisar "veio de outro pitch"
+// e, se o operador tentar editar, redirecionar pro pitch de origem em vez de
+// gravar no lugar errado.
+// =============================================================================
+
+export type ObjecaoEmprestada = {
+  pitchOrigemId: string;
+  pitchOrigemNome: string;
+  card: ParsedPitchCard;
+};
+
+/**
+ * Procura, entre os pitches informados (normalmente: todos os pitches de
+ * "abordagem" do mesmo tema, exceto o ativo), o primeiro que tenha uma
+ * objeção cujo label bata com `keywords`. Não olha pitches de outro tema —
+ * quem monta a lista de `outrosPitchesDoMesmoTema` já garante isso.
+ */
+export function encontrarObjecaoEmOutrosPitchesDoTema(
+  outrosPitchesDoMesmoTema: PromptItem[],
+  keywords: RegExp,
+): ObjecaoEmprestada | null {
+  for (const pitch of outrosPitchesDoMesmoTema) {
+    const parsed = parsePitchIntoCards(pitch.conteudo);
+    const achado = parsed.objecoes.find((o) => keywords.test(`${o.label} ${o.resposta}`));
+    if (achado) {
+      return { pitchOrigemId: pitch.id, pitchOrigemNome: pitch.nome, card: achado };
+    }
+  }
+  return null;
+}
+
+// =============================================================================
+// EDIÇÃO DE CARD → GRAVA DE VOLTA NO PITCH (serializador, inverso do parser)
+// -----------------------------------------------------------------------------
+// O card é um ESPELHO do pitch: editar o texto no card precisa atualizar a
+// seção correspondente dentro do texto bruto do pitch, preservando tudo mais
+// (numeração, outras seções, [NOTA: ...]) intacto. Só funciona em cards cuja
+// origem é o PRÓPRIO pitch ativo — cards emprestados de outro pitch do tema
+// ou gerados pelo sistema (fallback) não têm uma seção "sua" pra editar aqui.
+//
+// LIMITAÇÃO CONHECIDA (avisar o operador na UI): o novo texto não deve conter
+// aspas retas/curvas (" " "), porque são o delimitador da fala no formato do
+// pitch — aspas dentro do texto editado são convertidas em aspas simples (')
+// pra não quebrar a seção.
+// =============================================================================
+
+export function atualizarSecaoDoPitch(
+  pitchTextoOriginal: string,
+  alvo: { tipo: "abertura" } | { tipo: "objecao"; label: string },
+  novoTexto: string,
+): { textoAtualizado: string; encontrou: boolean } {
+  const linhas = (pitchTextoOriginal ?? "").split(/\r?\n/);
+  type SecaoRange = { titulo: string; inicio: number; fim: number };
+  const secoes: SecaoRange[] = [];
+  let tituloAtual: string | null = null;
+  let inicioAtual = -1;
+
+  function fecharSecaoAtual(fim: number) {
+    if (tituloAtual !== null && inicioAtual >= 0) {
+      secoes.push({ titulo: tituloAtual, inicio: inicioAtual, fim });
+    }
+  }
+
+  let parou = false;
+  for (let i = 0; i < linhas.length && !parou; i += 1) {
+    const linha = linhas[i];
+    if (NOTAS_EXECUCAO_RE.test(linha)) {
+      fecharSecaoAtual(i);
+      tituloAtual = null;
+      inicioAtual = -1;
+      parou = true;
+      break;
+    }
+    const heading = linha.match(HEADING_NUMERADO_RE);
+    if (heading) {
+      fecharSecaoAtual(i);
+      tituloAtual = heading[2];
+      inicioAtual = i + 1;
+      continue;
+    }
+  }
+  if (!parou) fecharSecaoAtual(linhas.length);
+
+  let alvoSecao: SecaoRange | undefined;
+  if (alvo.tipo === "abertura") {
+    alvoSecao = secoes.find((s) => removerAcentos(s.titulo).toUpperCase().startsWith("ABERTURA"));
+  } else {
+    alvoSecao = secoes.find((s) => {
+      const tituloNorm = removerAcentos(s.titulo).toUpperCase();
+      if (!tituloNorm.startsWith("OBJECAO")) return false;
+      const labelMatch = s.titulo.match(/[-—:]\s*["“](.+?)["”]/);
+      const labelBruto = (labelMatch?.[1] ?? s.titulo.replace(/^OBJE[CÇ][ÃA]O\s*[-—:]?\s*/i, "")).trim();
+      return normalizarParaComparar(labelBruto) === normalizarParaComparar(alvo.label);
+    });
+  }
+
+  if (!alvoSecao) return { textoAtualizado: pitchTextoOriginal, encontrou: false };
+
+  const corpoLinhas = linhas.slice(alvoSecao.inicio, alvoSecao.fim);
+  const corpoOriginal = corpoLinhas.join("\n");
+  const textoEscapado = novoTexto.replace(/["“”]/g, "'");
+
+  const quoteMatch = corpoOriginal.match(/["“]([\s\S]*?)["”]/);
+  let corpoNovo: string;
+  if (quoteMatch && typeof quoteMatch.index === "number") {
+    const antes = corpoOriginal.slice(0, quoteMatch.index);
+    const depois = corpoOriginal.slice(quoteMatch.index + quoteMatch[0].length);
+    corpoNovo = `${antes}"${textoEscapado}"${depois}`;
+  } else {
+    // Seção sem aspas (raro) — o corpo inteiro vira o texto novo.
+    corpoNovo = `"${textoEscapado}"`;
+  }
+
+  const novasLinhas = [
+    ...linhas.slice(0, alvoSecao.inicio),
+    ...corpoNovo.split("\n"),
+    ...linhas.slice(alvoSecao.fim),
+  ];
+
+  return { textoAtualizado: novasLinhas.join("\n"), encontrou: true };
 }
