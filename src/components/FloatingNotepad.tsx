@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { getActiveLead, ACTIVE_LEAD_EVENT, type ActiveLeadLike } from "@/lib/daily-activities";
+import { analisarConversaEstruturada, interpretarStatusConversa } from "@/lib/prospeccao.functions";
+import { extractFollowUpFromCall, createFollowUp } from "@/lib/follow-ups.functions";
+import { saveHistorico, getConsultor, type HistoricoEmpresa } from "@/lib/historico-store";
 
 /**
  * Bloco de Notas Flutuante
@@ -105,6 +109,12 @@ export default function FloatingNotepad() {
   const [currentActiveLead, setCurrentActiveLead] = useState<ActiveLeadLike | null>(() =>
     typeof window !== "undefined" ? getActiveLead() : null
   );
+  const [registering, setRegistering] = useState(false);
+
+  const runAnalise = useServerFn(analisarConversaEstruturada);
+  const runInterpretarStatus = useServerFn(interpretarStatusConversa);
+  const runExtractFollowUp = useServerFn(extractFollowUpFromCall);
+  const runCreateFollowUp = useServerFn(createFollowUp);
 
   const winRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -113,6 +123,7 @@ export default function FloatingNotepad() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bubbleDragged = useRef(false);
+  const registerBtnRef = useRef<HTMLButtonElement>(null);
 
   const activeTab = useCallback(
     (s: NotepadState = state) => s.tabs.find((t) => t.id === s.activeTabId) || s.tabs[0],
@@ -360,6 +371,104 @@ export default function FloatingNotepad() {
     }));
   }
 
+  // Reaproveita o mesmo motor de IA da Pós-ligação (análise estruturada +
+  // interpretação de status + extração de follow-up) pra transformar o texto
+  // livre da nota em campos reais de historico_empresas / follow_ups.
+  // Diferente da Pós-ligação, aqui NÃO reformatamos o texto (a nota já é a
+  // fala do próprio consultor) e não mexemos em Preparação Noturna/timer de
+  // ligação — isso é específico de quem está em ligação ativa, não de notas.
+  async function registrarNoHistorico() {
+    const tab = activeTab();
+    const linkedLead = tab.linkedLead;
+    const content = tab.content.trim();
+    if (!linkedLead || !content || registering) return;
+
+    setRegistering(true);
+    try {
+      const consultor = getConsultor();
+
+      const [analiseIa, interpretacao] = await Promise.all([
+        runAnalise({ data: { descricao: content } }).catch(() => null),
+        runInterpretarStatus({ data: { descricao: content } }).catch(() => ({
+          status: "follow_up" as const,
+          contatoNome: null,
+          contatoCargo: null,
+          tipoContato: "portaria" as const,
+        })),
+      ]);
+
+      let proximaAcao: string | null = analiseIa?.proximo_passo_sugerido ?? null;
+      let proximaAcaoData: string | null = null;
+      let followUpCriado = false;
+
+      const ex = await runExtractFollowUp({
+        data: {
+          transcricao: content,
+          historico: content,
+          empresaFallback: linkedLead.nome,
+          cnpjFallback: linkedLead.cnpj ?? undefined,
+        },
+      }).catch(() => null);
+
+      if (ex && !ex.refused && ex.hasFollowUp && ex.scheduledAt && ex.actionType) {
+        await runCreateFollowUp({
+          data: {
+            companyName: linkedLead.nome,
+            cnpj: linkedLead.cnpj ?? ex.cnpj ?? undefined,
+            contactPerson: ex.contactPerson ?? interpretacao.contatoNome ?? undefined,
+            actionType: ex.actionType,
+            scheduledAt: ex.scheduledAt,
+            notes: ex.notes ?? undefined,
+            consultor,
+          },
+        }).catch(() => null);
+        proximaAcaoData = ex.scheduledAt;
+        proximaAcao = ex.notes ?? proximaAcao;
+        followUpCriado = true;
+      }
+
+      const now = new Date();
+      const reg: HistoricoEmpresa = {
+        id: `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+        dataIso: now.toISOString(),
+        dataFormatada: now.toLocaleDateString("pt-BR"),
+        empresaNome: linkedLead.nome,
+        cnpj: linkedLead.cnpj ?? null,
+        contato: interpretacao.contatoNome,
+        cargo: interpretacao.contatoCargo,
+        resultado: analiseIa?.resumo_executivo ?? null,
+        interesse: analiseIa?.nivel_interesse ?? null,
+        objecao: (analiseIa?.objecoes_encontradas?.join("; ")) || null,
+        proximaAcao,
+        proximaAcaoData,
+        textoHistoricoCompleto: content,
+        descricaoOriginal: content,
+        consultor,
+        status:
+          interpretacao.status === "arquivado"
+            ? "arquivado"
+            : interpretacao.status === "reuniao"
+              ? "concluido"
+              : "pendente",
+      };
+      saveHistorico(reg);
+
+      const btn = registerBtnRef.current?.getBoundingClientRect();
+      setToast({
+        msg: followUpCriado ? "Registrado + follow-up criado" : "Registrado no histórico",
+        x: btn ? btn.left : 0,
+        y: btn ? btn.top - 30 : 0,
+      });
+    } catch {
+      const btn = registerBtnRef.current?.getBoundingClientRect();
+      setToast({ msg: "Erro ao registrar — tente de novo", x: btn ? btn.left : 0, y: btn ? btn.top - 30 : 0 });
+    } finally {
+      setRegistering(false);
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(null), 2200);
+    }
+  }
+
   // ---------- footer actions ----------
   function tabHeader(tab: NoteTab): string {
     if (!tab.linkedLead) return "";
@@ -468,6 +577,12 @@ export default function FloatingNotepad() {
           background:transparent; border:none; border-radius:4px; color:inherit; cursor:pointer; opacity:.85; }
         .fnp-iconbtn:hover{ background:rgba(255,255,255,.12); opacity:1; }
         .fnp-iconbtn svg{ width:15px; height:15px; }
+        .fnp-register{ color:var(--fnp-accent); border-color:var(--fnp-accent); }
+        .fnp-register:hover{ background:var(--fnp-accent-soft); }
+        .fnp-register:disabled{ opacity:.55; cursor:default; }
+        .fnp-register.busy{ opacity:.85; }
+        .fnp-spin{ animation:fnp-spin .8s linear infinite; }
+        @keyframes fnp-spin{ from{ transform:rotate(0deg); } to{ transform:rotate(360deg); } }
         .fnp-linkbar{ display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:11px;
           border-bottom:1px solid var(--fnp-border); flex:0 0 auto; }
         .fnp-linkbar svg{ width:12px; height:12px; flex:0 0 auto; opacity:.85; }
@@ -651,6 +766,28 @@ export default function FloatingNotepad() {
 
           <div className="fnp-footer">
             <div className="fnp-left">
+              {activeTab().linkedLead ? (
+                <button
+                  ref={registerBtnRef}
+                  className={"fnp-footbtn fnp-register" + (registering ? " busy" : "")}
+                  title="Analisa a nota e grava resultado/interesse/próxima ação no histórico da empresa (e cria follow-up, se aplicável)"
+                  disabled={registering || !activeTab().content.trim()}
+                  onClick={registrarNoHistorico}
+                >
+                  {registering ? (
+                    <svg className="fnp-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21 12a9 9 0 1 1-9-9" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                      <path d="M4 21V7l8-4 8 4v14" />
+                      <path d="M9 21v-6h6v6" />
+                      <path d="M9 3v4h6V3" />
+                    </svg>
+                  )}
+                  {registering ? "Registrando…" : "Registrar"}
+                </button>
+              ) : null}
               <button className="fnp-footbtn" title="Copiar aba atual" onClick={handleCopy}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                   <rect x="9" y="9" width="12" height="12" rx="1.5" />
