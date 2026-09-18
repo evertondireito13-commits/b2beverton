@@ -4,16 +4,25 @@ import {
   upsertUserPrompt,
   setActiveUserPrompt as setActiveUserPromptRemote,
   deleteUserPrompt,
+  listUserPromptTemas,
+  upsertUserPromptTema,
+  deleteUserPromptTema as deleteUserPromptTemaRemote,
 } from "@/lib/user-prompts.functions";
 
 
 // =============================================================================
-// PROMPT LIBRARY (v1)
+// PROMPT LIBRARY (v2 — com temas/abas)
 // -----------------------------------------------------------------------------
 // Cada operador (Everton / Heluane / ...) tem a sua própria biblioteca de
 // prompts, particionada por chave "::${consultor}". A biblioteca é composta por
 // N prompts nomeados de dois tipos ("abordagem" e "historico"). Um único
 // prompt de cada tipo é marcado como ATIVO — é esse que a IA usa.
+//
+// NOVIDADE (v2): prompts de tipo "abordagem" pertencem a um TEMA (aba) — ex:
+// "ICMS Intermediário", "Exclusão do ICMS da base do PIS/COFINS". Cada tema
+// agrupa os pitches daquela tese, sem nunca se misturar com os de outro tema.
+// Prompts de tipo "historico" NÃO têm tema (não fazem parte da organização
+// por tese — são só o molde da anotação de CRM).
 //
 // REGRAS DE OURO:
 // - O conteúdo do prompt é ARMAZENADO E ENVIADO À IA DE FORMA LITERAL. O
@@ -24,10 +33,14 @@ import {
 //   apagar todos os prompts de um tipo e quiser recriar do zero via botão).
 // - As variáveis dinâmicas (dados do lead / transcrição) são anexadas SEPARADAMENTE
 //   pela camada de chamada (userContent), fora do texto do prompt do usuário.
+// - MIGRAÇÃO: bibliotecas antigas (v1, sem tema) ganham automaticamente um
+//   tema "ICMS Intermediário" na primeira sincronização, e todo pitch órfão
+//   (sem temaId) é vinculado a ele — nenhum pitch existente "some".
 // =============================================================================
 
 const LIB_BASE = "prospeccao-prompt-library-v1";
 const LEGACY_BASE = "prospeccao-prompts-v6";
+const DEFAULT_TEMA_NOME = "ICMS Intermediário";
 
 export type PromptTipo = "abordagem" | "historico";
 
@@ -36,10 +49,22 @@ export type PromptItem = {
   nome: string;
   conteudo: string;
   tipo: PromptTipo;
+  /** Só usado quando tipo === "abordagem". Prompts de "historico" ficam null/undefined. */
+  temaId?: string | null;
+};
+
+export type Tema = {
+  id: string;
+  nome: string;
 };
 
 export type PromptLibrary = {
   items: PromptItem[];
+  temas: Tema[];
+  /** Aba selecionada agora na tela (estado de navegação). Se ficar
+   * desalinhada (tema apagado em outra aba do navegador, etc.), a UI cai
+   * para a primeira aba disponível. */
+  activeTemaId: string | null;
   activeAbordagemId: string | null;
   activeHistoricoId: string | null;
 };
@@ -63,7 +88,7 @@ function legacyKey(): string {
 }
 
 function genId(): string {
-  // UUID: mesmo identificador no cache local e na tabela user_prompts.
+  // UUID: mesmo identificador no cache local e nas tabelas remotas.
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
@@ -144,20 +169,25 @@ function seedFromLegacyOrDefaults(): PromptLibrary {
       /* ignora legado corrompido */
     }
   }
+  const temaDefault: Tema = { id: genId(), nome: DEFAULT_TEMA_NOME };
   const abordagem: PromptItem = {
     id: genId(),
     nome: "Abordagem padrão",
     conteudo: scriptSeed,
     tipo: "abordagem",
+    temaId: temaDefault.id,
   };
   const historico: PromptItem = {
     id: genId(),
     nome: "Histórico padrão",
     conteudo: historySeed,
     tipo: "historico",
+    temaId: null,
   };
   return {
     items: [abordagem, historico],
+    temas: [temaDefault],
+    activeTemaId: temaDefault.id,
     activeAbordagemId: abordagem.id,
     activeHistoricoId: historico.id,
   };
@@ -167,6 +197,8 @@ export function loadLibrary(): PromptLibrary {
   if (typeof window === "undefined") {
     return {
       items: [],
+      temas: [],
+      activeTemaId: null,
       activeAbordagemId: null,
       activeHistoricoId: null,
     };
@@ -177,6 +209,8 @@ export function loadLibrary(): PromptLibrary {
       const lib = JSON.parse(raw) as PromptLibrary;
       // sanity
       if (!Array.isArray(lib.items)) throw new Error("lib inválida");
+      if (!Array.isArray(lib.temas)) lib.temas = [];
+      if (lib.activeTemaId === undefined) lib.activeTemaId = lib.temas[0]?.id ?? null;
       return lib;
     }
   } catch {
@@ -198,7 +232,7 @@ export function saveLibrary(lib: PromptLibrary): void {
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização com o banco (tabela user_prompts) — persistência definitiva
+// Sincronização com o banco (tabelas user_prompts + user_prompt_temas)
 // ---------------------------------------------------------------------------
 
 function isActiveInLib(lib: PromptLibrary, item: PromptItem): boolean {
@@ -218,7 +252,16 @@ function pushPrompt(item: PromptItem, isActive: boolean): void {
       conteudo: item.conteudo,
       tipo: item.tipo,
       isActive,
+      temaId: item.tipo === "abordagem" ? item.temaId ?? null : null,
     },
+  }).catch(() => {});
+}
+
+/** Grava/atualiza um tema no banco (best-effort). */
+function pushTema(tema: Tema): void {
+  if (!isUuid(tema.id)) return;
+  void upsertUserPromptTema({
+    data: { id: tema.id, consultor: activeConsultor(), nome: tema.nome },
   }).catch(() => {});
 }
 
@@ -227,6 +270,9 @@ let syncing: Promise<PromptLibrary> | null = null;
 /**
  * Puxa a biblioteca do banco para o cache local. Se o banco ainda estiver
  * vazio para este consultor, sobe o que existe no navegador (migração única).
+ * Também cobre o caso de um consultor que já tinha pitches no banco ANTES da
+ * feature de temas existir: cria o tema padrão "ICMS Intermediário" na hora
+ * e vincula a ele qualquer pitch de abordagem sem tema.
  */
 export function syncLibraryFromCloud(): Promise<PromptLibrary> {
   if (typeof window === "undefined") return Promise.resolve(loadLibrary());
@@ -234,12 +280,25 @@ export function syncLibraryFromCloud(): Promise<PromptLibrary> {
   const consultor = activeConsultor();
   syncing = (async () => {
     try {
-      const rows = await listUserPrompts({ data: { consultor } });
-      if (!rows || rows.length === 0) {
-        // Primeira vez: migra o conteúdo local (ou semeado) para o banco.
+      const [rows, temaRows] = await Promise.all([
+        listUserPrompts({ data: { consultor } }),
+        listUserPromptTemas({ data: { consultor } }),
+      ]);
+
+      // Caso 1: nada no banco ainda (nem prompt, nem tema) — primeira vez
+      // deste consultor. Migra o que existir localmente (ou semeia default).
+      if ((!rows || rows.length === 0) && (!temaRows || temaRows.length === 0)) {
         const local = loadLibrary();
+        const temaLocalDefault: Tema =
+          local.temas[0] ?? { id: genId(), nome: DEFAULT_TEMA_NOME };
         const remapped: PromptLibrary = {
-          items: local.items.map((p) => ({ ...p, id: isUuid(p.id) ? p.id : genId() })),
+          items: local.items.map((p) => ({
+            ...p,
+            id: isUuid(p.id) ? p.id : genId(),
+            temaId: p.tipo === "abordagem" ? p.temaId ?? temaLocalDefault.id : null,
+          })),
+          temas: local.temas.length ? local.temas : [temaLocalDefault],
+          activeTemaId: local.activeTemaId ?? temaLocalDefault.id,
           activeAbordagemId: null,
           activeHistoricoId: null,
         };
@@ -249,6 +308,7 @@ export function syncLibraryFromCloud(): Promise<PromptLibrary> {
           if (local.activeHistoricoId === old.id) remapped.activeHistoricoId = novo.id;
         });
         saveLibrary(remapped);
+        for (const tema of remapped.temas) pushTema(tema);
         for (const item of remapped.items) {
           await upsertUserPrompt({
             data: {
@@ -258,20 +318,53 @@ export function syncLibraryFromCloud(): Promise<PromptLibrary> {
               conteudo: item.conteudo,
               tipo: item.tipo,
               isActive: isActiveInLib(remapped, item),
+              temaId: item.tipo === "abordagem" ? item.temaId ?? null : null,
             },
           }).catch(() => {});
         }
         return remapped;
       }
+
+      // Caso 2: já existiam prompts no banco (biblioteca v1, sem tema) —
+      // migração "in-place": cria o tema padrão e vincula os pitches órfãos.
+      let temas: Tema[] = (temaRows ?? []).map((t) => ({ id: t.id, nome: t.nome }));
+      const promptsSemTema = (rows ?? []).filter((r) => r.tipo === "abordagem" && !r.tema_id);
+      if (promptsSemTema.length > 0) {
+        let temaPadrao = temas.find((t) => t.nome === DEFAULT_TEMA_NOME);
+        if (!temaPadrao) {
+          temaPadrao = { id: genId(), nome: DEFAULT_TEMA_NOME };
+          temas = [...temas, temaPadrao];
+          pushTema(temaPadrao);
+        }
+        for (const row of promptsSemTema) {
+          row.tema_id = temaPadrao.id;
+          void upsertUserPrompt({
+            data: {
+              id: row.id,
+              consultor,
+              nome: row.nome,
+              conteudo: row.conteudo,
+              tipo: row.tipo,
+              isActive: row.is_active,
+              temaId: temaPadrao.id,
+            },
+          }).catch(() => {});
+        }
+      }
+
+      const rowsFinal = rows ?? [];
       const lib: PromptLibrary = {
-        items: rows.map((r) => ({
+        items: rowsFinal.map((r) => ({
           id: r.id,
           nome: r.nome,
           conteudo: r.conteudo,
           tipo: r.tipo,
+          temaId: r.tipo === "abordagem" ? r.tema_id ?? null : null,
         })),
-        activeAbordagemId: rows.find((r) => r.tipo === "abordagem" && r.is_active)?.id ?? null,
-        activeHistoricoId: rows.find((r) => r.tipo === "historico" && r.is_active)?.id ?? null,
+        temas,
+        activeTemaId: temas[0]?.id ?? null,
+        activeAbordagemId: rowsFinal.find((r) => r.tipo === "abordagem" && r.is_active)?.id ?? null,
+        activeHistoricoId: rowsFinal.find((r) => r.tipo === "historico" && r.is_active)?.id ?? null,
       };
       if (!lib.activeAbordagemId) {
         lib.activeAbordagemId = lib.items.find((p) => p.tipo === "abordagem")?.id ?? null;
@@ -279,6 +372,9 @@ export function syncLibraryFromCloud(): Promise<PromptLibrary> {
       if (!lib.activeHistoricoId) {
         lib.activeHistoricoId = lib.items.find((p) => p.tipo === "historico")?.id ?? null;
       }
+      // Aba ativa por padrão = a do pitch marcado como ativo, se existir.
+      const abordagemAtiva = lib.items.find((p) => p.id === lib.activeAbordagemId);
+      if (abordagemAtiva?.temaId) lib.activeTemaId = abordagemAtiva.temaId;
       saveLibrary(lib);
       return lib;
     } catch {
@@ -292,18 +388,22 @@ export function syncLibraryFromCloud(): Promise<PromptLibrary> {
 }
 
 // ---------------------------------------------------------------------------
-// CRUD
+// CRUD — Prompts (pitches)
 // ---------------------------------------------------------------------------
 
-
-
-export function createPrompt(tipo: PromptTipo, nome: string, conteudo: string): PromptItem {
+export function createPrompt(
+  tipo: PromptTipo,
+  nome: string,
+  conteudo: string,
+  temaId?: string | null,
+): PromptItem {
   const lib = loadLibrary();
   const item: PromptItem = {
     id: genId(),
     nome: nome.trim() || (tipo === "abordagem" ? "Novo prompt de abordagem" : "Novo prompt de histórico"),
     conteudo,
     tipo,
+    temaId: tipo === "abordagem" ? temaId ?? lib.activeTemaId ?? null : null,
   };
   lib.items.push(item);
   // Se não havia ativo desse tipo, o novo assume automaticamente.
@@ -314,7 +414,10 @@ export function createPrompt(tipo: PromptTipo, nome: string, conteudo: string): 
   return item;
 }
 
-export function updatePrompt(id: string, patch: Partial<Pick<PromptItem, "nome" | "conteudo">>): void {
+export function updatePrompt(
+  id: string,
+  patch: Partial<Pick<PromptItem, "nome" | "conteudo" | "temaId">>,
+): void {
   const lib = loadLibrary();
   const idx = lib.items.findIndex((p) => p.id === id);
   if (idx < 0) return;
@@ -322,6 +425,7 @@ export function updatePrompt(id: string, patch: Partial<Pick<PromptItem, "nome" 
     ...lib.items[idx],
     ...(patch.nome !== undefined ? { nome: patch.nome } : {}),
     ...(patch.conteudo !== undefined ? { conteudo: patch.conteudo } : {}),
+    ...(patch.temaId !== undefined ? { temaId: patch.temaId } : {}),
   };
   saveLibrary(lib);
   pushPrompt(lib.items[idx], isActiveInLib(lib, lib.items[idx]));
@@ -333,7 +437,7 @@ export function deletePrompt(id: string): void {
   if (!alvo) return;
   lib.items = lib.items.filter((p) => p.id !== id);
   if (lib.activeAbordagemId === id) {
-    const primeiro = lib.items.find((p) => p.tipo === "abordagem");
+    const primeiro = lib.items.find((p) => p.tipo === "abordagem" && p.temaId === alvo.temaId);
     lib.activeAbordagemId = primeiro?.id ?? null;
   }
   if (lib.activeHistoricoId === id) {
@@ -373,4 +477,59 @@ export function getActivePrompt(tipo: PromptTipo): PromptItem | null {
  */
 export function getActivePromptText(tipo: PromptTipo): string {
   return getActivePrompt(tipo)?.conteudo ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// CRUD — Temas (abas)
+// ---------------------------------------------------------------------------
+
+/** Todos os pitches (tipo "abordagem") de um tema específico. */
+export function getPromptsByTema(temaId: string): PromptItem[] {
+  const lib = loadLibrary();
+  return lib.items.filter((p) => p.tipo === "abordagem" && p.temaId === temaId);
+}
+
+export function createTema(nome: string): Tema {
+  const lib = loadLibrary();
+  const tema: Tema = { id: genId(), nome: nome.trim() || "Novo tema" };
+  lib.temas.push(tema);
+  if (!lib.activeTemaId) lib.activeTemaId = tema.id;
+  saveLibrary(lib);
+  pushTema(tema);
+  return tema;
+}
+
+export function renomearTema(id: string, nome: string): void {
+  const lib = loadLibrary();
+  const idx = lib.temas.findIndex((t) => t.id === id);
+  if (idx < 0) return;
+  lib.temas[idx] = { ...lib.temas[idx], nome: nome.trim() || lib.temas[idx].nome };
+  saveLibrary(lib);
+  pushTema(lib.temas[idx]);
+}
+
+/**
+ * Remove um tema. Recusa localmente (mesma regra do backend) se ainda houver
+ * pitch vinculado a ele, para o operador nunca perder pitch sem perceber.
+ * Retorna true se removeu, false se recusou.
+ */
+export function excluirTema(id: string): boolean {
+  const lib = loadLibrary();
+  const temPitchDentro = lib.items.some((p) => p.tipo === "abordagem" && p.temaId === id);
+  if (temPitchDentro) return false;
+  lib.temas = lib.temas.filter((t) => t.id !== id);
+  if (lib.activeTemaId === id) {
+    lib.activeTemaId = lib.temas[0]?.id ?? null;
+  }
+  saveLibrary(lib);
+  if (isUuid(id)) {
+    void deleteUserPromptTemaRemote({ data: { consultor: activeConsultor(), id } }).catch(() => {});
+  }
+  return true;
+}
+
+export function setActiveTema(id: string | null): void {
+  const lib = loadLibrary();
+  lib.activeTemaId = id;
+  saveLibrary(lib);
 }
