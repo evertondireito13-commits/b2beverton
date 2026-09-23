@@ -200,6 +200,8 @@ const phonesCache = new Map<string, Telefones>();
 const aiCache = new Map<string, string>();
 const contactNameCache = new Map<string, string>();
 
+type EmailDestinatario = { id: string; nome: string; funcao: string; contato: string };
+
 type ObjecaoCard = {
   id: string;
   label: string;
@@ -343,6 +345,25 @@ export function PreLigacao({
   const [reuniaoEmail, setReuniaoEmail] = useState((pre0 as Record<string, string>).reuniaoEmail ?? "");
   const [reuniaoData, setReuniaoData] = useState((pre0 as Record<string, string>).reuniaoData ?? "");
   const [reuniaoHora, setReuniaoHora] = useState((pre0 as Record<string, string>).reuniaoHora ?? "");
+  const [emailMaterial, setEmailMaterial] = useState((pre0 as Record<string, string>).emailMaterial ?? "");
+  const [emailDestinatarios, setEmailDestinatarios] = useState<EmailDestinatario[]>(
+    (pre0 as unknown as { emailDestinatarios?: EmailDestinatario[] }).emailDestinatarios?.length
+      ? (pre0 as unknown as { emailDestinatarios: EmailDestinatario[] }).emailDestinatarios
+      : [{ id: "d1", nome: "", funcao: "", contato: "" }],
+  );
+  const destinatarioIdRef = useRef(2);
+  function novoDestinatarioId() {
+    return `d${destinatarioIdRef.current++}`;
+  }
+  function addDestinatarioEmail() {
+    setEmailDestinatarios((prev) => [...prev, { id: novoDestinatarioId(), nome: "", funcao: "", contato: "" }]);
+  }
+  function removeDestinatarioEmail(id: string) {
+    setEmailDestinatarios((prev) => (prev.length <= 1 ? prev : prev.filter((d) => d.id !== id)));
+  }
+  function updateDestinatarioEmail(id: string, campo: "nome" | "funcao" | "contato", valor: string) {
+    setEmailDestinatarios((prev) => prev.map((d) => (d.id === id ? { ...d, [campo]: valor } : d)));
+  }
   const [modoEsteira, setModoEsteira] = useState<boolean>(true);
   const [prepOpen, setPrepOpen] = useState<boolean>(true);
   const [currentLeadState, setCurrentLeadState] = useState<ActiveLeadData | null>(null);
@@ -489,10 +510,12 @@ export function PreLigacao({
         reuniaoEmail,
         reuniaoData,
         reuniaoHora,
+        emailMaterial,
+        emailDestinatarios,
       } as Record<string, unknown>,
     });
     updateSessaoAtiva({ cnpj, dados, script, empresaResumo });
-  }, [cnpj, dados, script, empresaResumo, nomeBusca, reuniaoNome, reuniaoFuncao, reuniaoEmail, reuniaoData, reuniaoHora]);
+  }, [cnpj, dados, script, empresaResumo, nomeBusca, reuniaoNome, reuniaoFuncao, reuniaoEmail, reuniaoData, reuniaoHora, emailMaterial, emailDestinatarios]);
 
   function limparRascunhoPre() {
     setCnpj("");
@@ -508,6 +531,8 @@ export function PreLigacao({
     setReuniaoEmail("");
     setReuniaoData("");
     setReuniaoHora("");
+    setEmailMaterial("");
+    setEmailDestinatarios([{ id: "d1", nome: "", funcao: "", contato: "" }]);
     setConferirDadosOpen(true);
     updateRascunho({
       pre: {
@@ -521,6 +546,8 @@ export function PreLigacao({
         reuniaoEmail: "",
         reuniaoData: "",
         reuniaoHora: "",
+        emailMaterial: "",
+        emailDestinatarios: [],
       } as Record<string, unknown>,
     });
     updateSessaoAtiva({ cnpj: "", dados: "", script: "", empresaResumo: null, telefones: null });
@@ -1117,6 +1144,44 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStep]);
+
+  useEffect(() => {
+    if (activeStep !== "email") return;
+    const jaTemNome = emailDestinatarios.some((d) => d.nome.trim());
+    if (jaTemNome) return;
+    const contato = currentLeadState?.contatoNome?.trim();
+    if (!contato) return;
+    const match = contato.match(/^(.*?)\s*\((.*)\)\s*$/);
+    setEmailDestinatarios((prev) => {
+      const primeiro = prev[0] ?? { id: "d1", nome: "", funcao: "", contato: "" };
+      const atualizado = match
+        ? { ...primeiro, nome: match[1].trim(), funcao: primeiro.funcao || match[2].trim() }
+        : { ...primeiro, nome: contato };
+      return [atualizado, ...prev.slice(1)];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStep]);
+
+  async function copyResumoEmail() {
+    const empresa = currentLeadState?.razaoSocial ?? empresaResumo ?? "Empresa";
+    const linhasDestinatarios = emailDestinatarios
+      .filter((d) => d.nome.trim() || d.contato.trim())
+      .map((d) => {
+        const partes = [
+          d.nome.trim(),
+          d.funcao.trim() && `(${d.funcao.trim()})`,
+          d.contato.trim() && `— ${d.contato.trim()}`,
+        ].filter(Boolean).join(" ");
+        return `- ${partes}`;
+      });
+    const linhas = [
+      `Empresa: ${empresa}`,
+      emailMaterial.trim() && `Enviar: ${emailMaterial.trim()}`,
+      linhasDestinatarios.length ? `Destinatários:\n${linhasDestinatarios.join("\n")}` : "",
+    ].filter(Boolean).join("\n");
+    await navigator.clipboard.writeText(linhas);
+    toast.success("Resumo do envio copiado");
+  }
 
   async function copyResumoReuniao() {
     const empresa = currentLeadState?.razaoSocial ?? empresaResumo ?? "Empresa";
@@ -2049,6 +2114,111 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       Fica salvo automaticamente aqui (sobrevive a troca de aba/reload). Use o resumo pra
                       registrar no Pós-ligação ou na Central de Reuniões.
+                    </p>
+                  </div>
+                )}
+
+                {cardAtivo.id === "email" && editandoCardId !== cardAtivo.id && (
+                  <div className="mt-3 border-t border-border/60 pt-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Dados de quem vai receber (e-mail ou WhatsApp)
+                    </p>
+
+                    <div className="mb-2">
+                      <Label htmlFor="email-material" className="text-[11px]">
+                        O que vai enviar
+                      </Label>
+                      <Input
+                        id="email-material"
+                        value={emailMaterial}
+                        onChange={(e) => setEmailMaterial(e.target.value)}
+                        placeholder="Ex: apresentação institucional, resumo por escrito do que conversamos"
+                        className="h-8 text-sm"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      {emailDestinatarios.map((d, idx) => (
+                        <div
+                          key={d.id}
+                          className="grid grid-cols-1 gap-2 rounded-md border border-border/50 p-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end"
+                        >
+                          <div>
+                            <Label htmlFor={`email-nome-${d.id}`} className="text-[11px]">
+                              {idx === 0 ? "Nome" : `Nome (contato ${idx + 1})`}
+                            </Label>
+                            <Input
+                              id={`email-nome-${d.id}`}
+                              value={d.nome}
+                              onChange={(e) => updateDestinatarioEmail(d.id, "nome", e.target.value)}
+                              placeholder="Ex: Rafaela"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor={`email-funcao-${d.id}`} className="text-[11px]">
+                              Função/Cargo
+                            </Label>
+                            <Input
+                              id={`email-funcao-${d.id}`}
+                              value={d.funcao}
+                              onChange={(e) => updateDestinatarioEmail(d.id, "funcao", e.target.value)}
+                              placeholder="Ex: Financeiro"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor={`email-contato-${d.id}`} className="text-[11px]">
+                              E-mail ou WhatsApp
+                            </Label>
+                            <Input
+                              id={`email-contato-${d.id}`}
+                              value={d.contato}
+                              onChange={(e) => updateDestinatarioEmail(d.id, "contato", e.target.value)}
+                              placeholder="nome@empresa.com.br ou (11) 99999-9999"
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          {emailDestinatarios.length > 1 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 justify-self-end px-2 text-muted-foreground hover:text-destructive sm:justify-self-center"
+                              onClick={() => removeDestinatarioEmail(d.id)}
+                              aria-label="Remover este contato"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-7 text-[11px]"
+                      onClick={addDestinatarioEmail}
+                    >
+                      + Adicionar outro contato
+                    </Button>
+
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7 text-[11px]"
+                        onClick={copyResumoEmail}
+                      >
+                        <Copy className="mr-1 h-3 w-3" />
+                        Copiar resumo do envio
+                      </Button>
+                    </div>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Fica salvo automaticamente aqui (sobrevive a troca de aba/reload). Use o resumo pra
+                      registrar no Pós-ligação — isso não conta como reunião fechada.
                     </p>
                   </div>
                 )}
