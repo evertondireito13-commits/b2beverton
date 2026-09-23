@@ -354,9 +354,15 @@ export function PreLigacao({
   const [conferirDadosOpen, setConferirDadosOpen] = useState<boolean>(true);
   const dadosSectionRef = useRef<HTMLDivElement | null>(null);
   const scriptSectionRef = useRef<HTMLDivElement | null>(null);
+  const fluxoSectionRef = useRef<HTMLDivElement | null>(null);
   function scrollToScript() {
     setTimeout(() => {
       scriptSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
+  function scrollToFluxo() {
+    setTimeout(() => {
+      fluxoSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
   }
   const dadosDirtyRef = useRef<boolean>(false);
@@ -819,7 +825,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         setScript(extractFinalScriptOnly(preencherTagsDoScript(cached, lead, dados.trim(), nomeContatoIA)));
         setScriptOpen(false);
         setPrepOpen(false);
-        scrollToScript();
+        scrollToFluxo();
         void autoIniciarGravacao();
         toast.info("Script recuperado do cache (sem gastar créditos de IA)");
         return;
@@ -839,7 +845,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
       setScript(finalText);
       setScriptOpen(false);
       setPrepOpen(false);
-      scrollToScript();
+      scrollToFluxo();
       void autoIniciarGravacao();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Falha na IA");
@@ -900,7 +906,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         setLoadingGen(false);
       }
       setScriptOpen(false);
-      scrollToScript();
+      scrollToFluxo();
       toast.success(
         currentLeadState
           ? "Script compilado com contato extraído por IA."
@@ -1234,11 +1240,12 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
-                className="text-white/80 hover:bg-white/10 hover:text-white"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-white/50 hover:bg-white/10 hover:text-white/90"
+                title="Limpar tudo"
+                aria-label="Limpar tudo"
               >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Limpar tudo
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -1279,14 +1286,17 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-3 pt-3">
 
-        <div className="flex items-center gap-2">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
-            1
-          </span>
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Buscar empresa
-          </span>
-        </div>
+        <div className="relative space-y-3 pl-6">
+          <div className="absolute bottom-1 left-[9px] top-1 w-px bg-border" aria-hidden="true" />
+
+          <div className="flex items-center gap-2">
+            <span className="relative z-10 -ml-6 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+              1
+            </span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Buscar empresa
+            </span>
+          </div>
 
         {!cnpj.trim() && !dados.trim() && !nomeBusca.trim() && (
           <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -1511,7 +1521,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               className="flex w-full items-center justify-between gap-2 text-left"
             >
               <span className="flex items-center gap-2">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+                <span className="relative z-10 -ml-6 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
                   2
                 </span>
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1569,21 +1579,12 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         </Collapsible>
 
         <div className="flex items-center gap-2 border-t border-border/60 pt-3">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+          <span className="relative z-10 -ml-6 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
             3
           </span>
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Gerar script
           </span>
-          {script.trim() && (
-            <Badge
-              variant="outline"
-              className="ml-auto gap-1 border-emerald-300 bg-emerald-50 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
-            >
-              <Check className="h-3 w-3" />
-              Script pronto
-            </Badge>
-          )}
         </div>
 
         <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/40 px-4 py-3">
@@ -1628,6 +1629,8 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
           )}
         </Button>
 
+        </div>
+
           </CollapsibleContent>
         </Collapsible>
 
@@ -1642,7 +1645,7 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
               <CollapsibleTrigger asChild>
                 <button className="flex flex-1 items-center gap-2 text-left text-xs font-medium hover:underline">
                   <span>{scriptOpen ? "▼" : "▶"}</span>
-                  <span>Script gerado</span>
+                  <span>Ver texto completo do script</span>
                   <span className="text-muted-foreground">
                     ({scriptOpen ? "clique para recolher" : "clique para expandir"})
                   </span>
@@ -1696,14 +1699,28 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
         )}
 
         {(currentLeadState || dados.trim()) && (
-          <div className="border-t border-border/60 pt-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
-                4
-              </span>
-              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Fluxo da ligação
-              </span>
+          <div className="border-t border-border/60 pt-3" ref={fluxoSectionRef}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-navy-deep/10 text-[11px] font-bold text-navy-deep">
+                  4
+                </span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Fluxo da ligação
+                </span>
+              </div>
+              {script.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScriptOpen(true);
+                    scrollToScript();
+                  }}
+                  className="text-[11px] font-normal text-muted-foreground underline hover:text-foreground"
+                >
+                  Ver texto completo do script
+                </button>
+              )}
             </div>
 
             {!activeStep && (
@@ -1767,26 +1784,31 @@ COMANDO DE EXECUÇÃO: Com base EXCLUSIVAMENTE nos [DADOS DO LEAD] acima, gere o
                     key={obj.id}
                     type="button"
                     onClick={() => (isCurrent ? fecharStep() : irParaStep(obj.id))}
-                    className={`relative flex flex-col items-center gap-1 rounded-lg border px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
+                    className={`relative flex flex-col items-center gap-1 rounded-lg border-2 px-2 py-2.5 text-center text-[11px] font-medium transition-all ${
                       isCurrent
                         ? "border-primary bg-primary/10 text-primary shadow-sm"
-                        : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+                        : obj.origem === "sistema"
+                          ? "border-amber-300 bg-amber-50/60 text-muted-foreground hover:border-amber-400 hover:text-foreground dark:border-amber-900 dark:bg-amber-950/20"
+                          : obj.origem === "pitch-tema"
+                            ? "border-sky-300 bg-sky-50/60 text-muted-foreground hover:border-sky-400 hover:text-foreground dark:border-sky-900 dark:bg-sky-950/20"
+                            : "border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
                     }`}
                   >
+                    <Icon className="h-4 w-4" />
+                    {obj.label}
                     {obj.origem === "sistema" && (
-                      <span
-                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-400"
-                        title="Gerado pelo sistema"
-                      />
+                      <span className="rounded-full bg-amber-200/80 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                        Sistema
+                      </span>
                     )}
                     {obj.origem === "pitch-tema" && (
                       <span
-                        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-sky-400"
+                        className="rounded-full bg-sky-200/80 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-900/60 dark:text-sky-300"
                         title={`Veio de outro pitch do tema: ${obj.origemPitchNome}`}
-                      />
+                      >
+                        Outro pitch
+                      </span>
                     )}
-                    <Icon className="h-4 w-4" />
-                    {obj.label}
                   </button>
                 );
               })}
